@@ -38,13 +38,6 @@ const pullRetrySleepInterval = time.Second
 
 var logger = util.GetLogger(util.PrivateDataLogger, "")
 
-//go:generate mockery -dir . -name CollectionStore -case underscore -output mocks/
-
-// CollectionStore is the local interface used to generate mocks for foreign interface.
-type CollectionStore interface {
-	privdata.CollectionStore
-}
-
 //go:generate mockery -dir . -name Committer -case underscore -output mocks/
 
 // Committer is the local interface used to generate mocks for foreign interface.
@@ -129,7 +122,6 @@ type CapabilityProvider interface {
 // aggregate required functionality by single struct
 type Support struct {
 	ChainID string
-	privdata.CollectionStore
 	txvalidator.Validator
 	committer.Committer
 	TransientStore
@@ -144,6 +136,7 @@ type coordinator struct {
 	metrics                        *metrics.PrivdataMetrics
 	pullRetryThreshold             time.Duration
 	skipPullingInvalidTransactions bool
+	collectionStore                *privdata.SimpleCollectionStore
 }
 
 type CoordinatorConfig struct {
@@ -154,13 +147,15 @@ type CoordinatorConfig struct {
 
 // NewCoordinator creates a new instance of coordinator
 func NewCoordinator(support Support, selfSignedData protoutil.SignedData, metrics *metrics.PrivdataMetrics,
-	config CoordinatorConfig) Coordinator {
+	config CoordinatorConfig, collectionStore *privdata.SimpleCollectionStore) Coordinator {
 	return &coordinator{Support: support,
 		selfSignedData:                 selfSignedData,
 		transientBlockRetention:        config.TransientBlockRetention,
 		metrics:                        metrics,
 		pullRetryThreshold:             config.PullRetryThreshold,
-		skipPullingInvalidTransactions: config.SkipPullingInvalidTransactions}
+		skipPullingInvalidTransactions: config.SkipPullingInvalidTransactions,
+		collectionStore:                collectionStore,
+	}
 }
 
 // StorePvtData used to persist private date into transient store
@@ -210,12 +205,14 @@ func (c *coordinator) StoreBlock(block *common.Block, privateDataSets util.PvtDa
 		logger.Warning("Failed computing owned RWSets", err)
 		return err
 	}
+	// fmt.Printf("\nownedrwsets after compute: %#v\n", ownedRWsets)
 
 	privateInfo, err := c.listMissingPrivateData(block, ownedRWsets)
 	if err != nil {
 		logger.Warning(err)
 		return err
 	}
+	// fmt.Printf("\nownedrwsets after listmissingpvtdata: %#v\n", ownedRWsets)
 
 	// if the peer is configured to not pull private rwset of invalid
 	// transaction during block commit, we need to delete those
@@ -270,6 +267,7 @@ func (c *coordinator) StoreBlock(block *common.Block, privateDataSets util.PvtDa
 
 	// populate the private RWSets passed to the ledger
 	for seqInBlock, nsRWS := range ownedRWsets.bySeqsInBlock() {
+		// fmt.Printf("\niterating:\nseq: %#v\nnsrws: %#v\n", seqInBlock, nsRWS)
 		rwsets := nsRWS.toRWSet()
 		logger.Debugf("[%s] Added %d namespace private write sets for block [%d], tran [%d]", c.ChainID, len(rwsets.NsPvtRwset), block.Header.Number, seqInBlock)
 		blockAndPvtData.PvtData[seqInBlock] = &ledger.TxPvtData{
@@ -277,6 +275,7 @@ func (c *coordinator) StoreBlock(block *common.Block, privateDataSets util.PvtDa
 			WriteSet:   rwsets,
 		}
 	}
+	// fmt.Printf("\npvtdata: %#v\n", blockAndPvtData.PvtData)
 
 	// populate missing RWSets to be passed to the ledger
 	for missingRWS := range privateInfo.missingKeys {
@@ -604,6 +603,7 @@ type blockConsumer func(seqInBlock uint64, chdr *common.ChannelHeader, txRWSet *
 
 func (data blockData) forEachTxn(storePvtDataOfInvalidTx bool, txsFilter txValidationFlags, consumer blockConsumer) (txns, error) {
 	var txList []string
+	// fmt.Printf("\ndata: %#v\n", data)
 	for seqInBlock, envBytes := range data {
 		env, err := protoutil.GetEnvelopeFromBlock(envBytes)
 		if err != nil {
@@ -662,6 +662,7 @@ func (data blockData) forEachTxn(storePvtDataOfInvalidTx bool, txsFilter txValid
 			logger.Warning("Failed obtaining TxRwSet from ChaincodeAction's results", err)
 			continue
 		}
+		// fmt.Printf("\ntxrwsets: %#v\n", txRWSet)
 		err = consumer(uint64(seqInBlock), chdr, txRWSet, ccActionPayload.Action.Endorsements)
 		if err != nil {
 			return txList, err
@@ -710,6 +711,7 @@ func (c *coordinator) listMissingPrivateData(block *common.Block, ownedRWsets ma
 	privateRWsetsInBlock := make(map[rwSetKey]struct{})
 	missing := make(rwSetKeysByTxIDs)
 	data := blockData(block.Data.Data)
+	// fmt.Printf("\nblockdata: %#v\n", data)
 	bi := &transactionInspector{
 		sources:              sources,
 		missingKeys:          missing,
@@ -732,8 +734,12 @@ func (c *coordinator) listMissingPrivateData(block *common.Block, ownedRWsets ma
 
 	logger.Debug("Retrieving private write sets for", len(privateInfo.missingKeysByTxIDs), "transactions from transient store")
 
+	// fmt.Printf("\nownedrwsets before fetch from transient: %#v\n", ownedRWsets)
+	// fmt.Printf("\nprivate info before fetch from transient: %#v\n", privateInfo)
 	// Put into ownedRWsets RW sets that are missing and found in the transient store
 	c.fetchMissingFromTransientStore(privateInfo.missingKeysByTxIDs, ownedRWsets)
+	// fmt.Printf("\nownedrwsets after fetch from transient: %#v\n", ownedRWsets)
+	// fmt.Printf("\nprivate info after fetch from transient: %#v\n", privateInfo)
 
 	// In the end, iterate over the ownedRWsets, and if the key doesn't exist in
 	// the privateRWsetsInBlock - delete it from the ownedRWsets
@@ -743,6 +749,8 @@ func (c *coordinator) listMissingPrivateData(block *common.Block, ownedRWsets ma
 			delete(ownedRWsets, k)
 		}
 	}
+
+	// fmt.Printf("\nownedrwsets after deletion: %#v\n", ownedRWsets)
 
 	privateInfo.missingKeys = privateInfo.missingKeysByTxIDs.flatten()
 	// Remove all keys we already own
@@ -767,6 +775,7 @@ func (bi *transactionInspector) inspectTransaction(seqInBlock uint64, chdr *comm
 	for _, ns := range txRWSet.NsRwSets {
 		for _, hashedCollection := range ns.CollHashedRwSets {
 			if !containsWrites(chdr.TxId, ns.NameSpace, hashedCollection) {
+				// fmt.Printf("\nskipping\n")
 				continue
 			}
 
@@ -794,6 +803,7 @@ func (bi *transactionInspector) inspectTransaction(seqInBlock uint64, chdr *comm
 			}
 
 			if !bi.isEligible(policy, ns.NameSpace, hashedCollection.CollectionName) {
+				// fmt.Printf("\nkey not eligible: %#v\npolicy: %#v\n", key, policy)
 				logger.Debugf("Peer is not eligible for collection, channel [%s], chaincode [%s], "+
 					"collection name [%s], txID [%s] the policy is [%#v]. Skipping.",
 					chdr.ChannelId, ns.NameSpace, hashedCollection.CollectionName, chdr.TxId, policy)
@@ -802,6 +812,7 @@ func (bi *transactionInspector) inspectTransaction(seqInBlock uint64, chdr *comm
 			}
 
 			bi.privateRWsetsInBlock[key] = struct{}{}
+			// fmt.Printf("\nadding key to privateRWsetsInBlock: %#v: ", key)
 			if _, exists := bi.ownedRWsets[key]; !exists {
 				txAndSeq := txAndSeqInBlock{
 					txID:       chdr.TxId,
@@ -824,18 +835,18 @@ func (c *coordinator) accessPolicyForCollection(chdr *common.ChannelHeader, name
 		Collection: col,
 		TxId:       chdr.TxId,
 	}
-	sp, err := c.CollectionStore.RetrieveCollectionAccessPolicy(cp)
-
-	if _, isNoSuchCollectionError := err.(privdata.NoSuchCollectionError); err != nil && !isNoSuchCollectionError {
-		logger.Warning("Failed obtaining policy for", cp, "due to database unavailability:", err)
-		return nil, err
+	sc, err := privdata.NewSimpleCollectionByCollectionCriteria(c.collectionStore, cp)
+	if err != nil {
+		return nil, errors.WithMessagef(err, "failed obtaining collection policy for channel %s, chaincode %s, config %s", chdr.ChannelId, namespace, col)
 	}
-	return sp, nil
+
+	return sc, nil
 }
 
 // isEligible checks if this peer is eligible for a given CollectionAccessPolicy
 func (c *coordinator) isEligible(ap privdata.CollectionAccessPolicy, namespace string, col string) bool {
 	filt := ap.AccessFilter()
+	// fmt.Printf("\nselfsigneddata: %#v\n", c.selfSignedData)
 	eligible := filt(c.selfSignedData)
 	if !eligible {
 		logger.Debug("Skipping namespace", namespace, "collection", col, "because we're not eligible for the private data")
@@ -911,12 +922,13 @@ func (c *coordinator) GetPvtDataAndBlockByNum(seqNum uint64, peerAuthInfo protou
 						Namespace:  ns.Namespace,
 						Collection: col.CollectionName,
 					}
-					sp, err := c.CollectionStore.RetrieveCollectionAccessPolicy(cc)
+					sc, err := privdata.NewSimpleCollectionByCollectionCriteria(c.collectionStore, cc)
 					if err != nil {
-						logger.Warning("Failed obtaining policy for", cc, ":", err)
+						logger.Warningf("Failed obtaining collection policy for channel %s, chaincode %s, config %s", chdr.ChannelId, ns.Namespace, col.CollectionName)
 						continue
 					}
-					isAuthorized := sp.AccessFilter()
+
+					isAuthorized := sc.AccessFilter()
 					if isAuthorized == nil {
 						logger.Warning("Failed obtaining filter for", cc)
 						continue

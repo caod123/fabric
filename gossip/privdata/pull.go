@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hyperledger/fabric/common/cauthdsl"
 	commonutil "github.com/hyperledger/fabric/common/util"
 	"github.com/hyperledger/fabric/core/common/privdata"
 	"github.com/hyperledger/fabric/gossip/api"
@@ -70,27 +71,27 @@ type gossip interface {
 }
 
 type puller struct {
-	metrics       *metrics.PrivdataMetrics
-	pubSub        *util.PubSub
-	stopChan      chan struct{}
-	msgChan       <-chan protoext.ReceivedMessage
-	channel       string
-	cs            privdata.CollectionStore
-	btlPullMargin uint64
+	metrics         *metrics.PrivdataMetrics
+	pubSub          *util.PubSub
+	stopChan        chan struct{}
+	msgChan         <-chan protoext.ReceivedMessage
+	channel         string
+	collectionStore *privdata.SimpleCollectionStore
+	btlPullMargin   uint64
 	gossip
 	PrivateDataRetriever
 	CollectionAccessFactory
 }
 
 // NewPuller creates new private data puller
-func NewPuller(metrics *metrics.PrivdataMetrics, cs privdata.CollectionStore, g gossip,
-	dataRetriever PrivateDataRetriever, factory CollectionAccessFactory, channel string, btlPullMargin uint64) *puller {
+func NewPuller(metrics *metrics.PrivdataMetrics, collectionStore *privdata.SimpleCollectionStore,
+	g gossip, dataRetriever PrivateDataRetriever, factory CollectionAccessFactory, channel string, btlPullMargin uint64) *puller {
 	p := &puller{
 		metrics:                 metrics,
 		pubSub:                  util.NewPubSub(),
 		stopChan:                make(chan struct{}),
 		channel:                 channel,
-		cs:                      cs,
+		collectionStore:         collectionStore,
 		btlPullMargin:           btlPullMargin,
 		gossip:                  g,
 		PrivateDataRetriever:    dataRetriever,
@@ -493,7 +494,28 @@ func (p *puller) computeReconciliationFilters(dig2collectionConfig privdatacommo
 			return nil, err
 		}
 
-		originalConfigFilter, err := p.cs.AccessFilter(p.channel, originalCollectionConfig.MemberOrgsPolicy)
+		collectionPolicyConfig := originalCollectionConfig.MemberOrgsPolicy
+		deserializer := p.collectionStore.IdDeserializerFactory.GetIdentityDeserializer(p.channel)
+
+		accessPolicyEnvelope := collectionPolicyConfig.GetSignaturePolicy()
+		if accessPolicyEnvelope == nil {
+			return nil, errors.New("collection config access policy is nil")
+		}
+		// create access policy from the envelope
+
+		pp := cauthdsl.EnvelopeBasedPolicyProvider{Deserializer: deserializer}
+		accessPolicy, err := pp.NewPolicy(accessPolicyEnvelope)
+		if err != nil {
+			return nil, errors.WithMessage(err, "failed constructing policy object out of collection policy config")
+		}
+
+		originalConfigFilter := func(sd protoutil.SignedData) bool {
+			if err := accessPolicy.Evaluate([]*protoutil.SignedData{&sd}); err != nil {
+				return false
+			}
+			return true
+		}
+
 		if err != nil {
 			return nil, err
 		}
@@ -528,12 +550,12 @@ func (p *puller) getLatestCollectionConfigRoutingFilter(chaincode string, collec
 		Namespace:  chaincode,
 	}
 
-	latestCollectionConfig, err := p.cs.RetrieveCollectionAccessPolicy(cc)
+	sc, err := privdata.NewSimpleCollectionByCollectionCriteria(p.collectionStore, cc)
 	if err != nil {
 		return nil, errors.WithMessagef(err, "failed obtaining collection policy for channel %s, chaincode %s, config %s", p.channel, chaincode, collection)
 	}
 
-	filt := latestCollectionConfig.AccessFilter()
+	filt := sc.AccessFilter()
 	if filt == nil {
 		return nil, errors.Errorf("Failed obtaining collection filter for channel %s, chaincode %s, collection %s", p.channel, chaincode, collection)
 	}
@@ -585,9 +607,17 @@ func (p *puller) purgedFilter(dig privdatacommon.DigKey) (filter.RoutingFilter, 
 		Collection: dig.Collection,
 		Namespace:  dig.Namespace,
 	}
-	colPersistConfig, err := p.cs.RetrieveCollectionPersistenceConfigs(cc)
+
+	qe, err := p.collectionStore.QeFactory.NewQueryExecutor()
 	if err != nil {
-		return nil, errors.WithStack(err)
+		return nil, errors.WithMessagef(err, "could not retrieve query executor for collection criteria %#v", cc)
+	}
+	defer qe.Done()
+
+	staticCollectionConfig, err := p.collectionStore.CcInfoProvider.CollectionInfo(p.channel, cc.Namespace, cc.Collection, qe)
+	if _, isNoSuchCollectionError := err.(privdata.NoSuchCollectionError); err != nil && !isNoSuchCollectionError {
+		logger.Warning("Failed obtaining policy for", cc, "due to database unavailability:", err)
+		return nil, err
 	}
 
 	return func(peer discovery.NetworkMember) bool {
@@ -596,18 +626,18 @@ func (p *puller) purgedFilter(dig privdatacommon.DigKey) (filter.RoutingFilter, 
 			return false
 		}
 		// BTL equals to zero has semantic of never expires
-		if colPersistConfig.BlockToLive() == uint64(0) {
+		if staticCollectionConfig.BlockToLive == uint64(0) {
 			return false
 		}
 		// handle overflow
-		expirationSeqNum := addWithOverflow(dig.BlockSeq, colPersistConfig.BlockToLive())
+		expirationSeqNum := addWithOverflow(dig.BlockSeq, staticCollectionConfig.BlockToLive)
 		peerLedgerHeightWithMargin := addWithOverflow(peer.Properties.LedgerHeight, p.btlPullMargin)
 
 		isPurged := peerLedgerHeightWithMargin >= expirationSeqNum
 		if isPurged {
 			logger.Debugf("skipping peer [%s], since pvt for channel [%s], txID = [%s], "+
 				"collection [%s] has been purged or will soon be purged, BTL=[%d]",
-				peer.Endpoint, p.channel, cc.TxId, cc.Collection, colPersistConfig.BlockToLive())
+				peer.Endpoint, p.channel, cc.TxId, cc.Collection, staticCollectionConfig.BlockToLive)
 		}
 		return isPurged
 	}, nil
@@ -668,12 +698,18 @@ func (p *puller) isEligibleByLatestConfig(channel string, collection string, cha
 		Namespace:  chaincode,
 	}
 
-	latestCollectionConfig, err := p.cs.RetrieveCollectionAccessPolicy(cc)
+	sc, err := privdata.NewSimpleCollectionByCollectionCriteria(p.collectionStore, cc)
 	if err != nil {
+		logger.Warningf("Failed obtaining collection policy for channel %s, chaincode %s, config %s", cc.Channel, cc.Namespace, cc.Collection)
 		return false
 	}
 
-	collectionFilter := latestCollectionConfig.AccessFilter()
+	collectionFilter := sc.AccessFilter()
+	if collectionFilter == nil {
+		logger.Warning("Failed obtaining filter for", cc)
+		return false
+	}
+
 	return collectionFilter(signedData)
 }
 

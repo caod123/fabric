@@ -145,9 +145,9 @@ func TestNewSimpleCollectionByCollectionCriteriaWithBadCollectionCriteria(t *tes
 	mockIDDeserializerFactory.GetIdentityDeserializerReturns(&mockDeserializer{})
 
 	cs := &SimpleCollectionStore{
-		qeFactory:             mockQueryExecutorFactory,
-		ccInfoProvider:        mockCCInfoProvider,
-		idDeserializerFactory: mockIDDeserializerFactory,
+		QeFactory:             mockQueryExecutorFactory,
+		CcInfoProvider:        mockCCInfoProvider,
+		IdDeserializerFactory: mockIDDeserializerFactory,
 	}
 
 	mockQueryExecutorFactory.NewQueryExecutorReturns(nil, errors.New("new-query-executor-failed"))
@@ -176,9 +176,9 @@ func TestNewSimpleCollectionByCollectionCriteriaWithGoodCollectionCriteria(t *te
 	mockIDDeserializerFactory.GetIdentityDeserializerReturns(&mockDeserializer{})
 
 	cs := &SimpleCollectionStore{
-		qeFactory:             mockQueryExecutorFactory,
-		ccInfoProvider:        mockCCInfoProvider,
-		idDeserializerFactory: mockIDDeserializerFactory,
+		QeFactory:             mockQueryExecutorFactory,
+		CcInfoProvider:        mockCCInfoProvider,
+		IdDeserializerFactory: mockIDDeserializerFactory,
 	}
 
 	var signers = [][]byte{[]byte("signer0"), []byte("signer1")}

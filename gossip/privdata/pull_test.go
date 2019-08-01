@@ -13,8 +13,11 @@ import (
 	"testing"
 
 	pb "github.com/golang/protobuf/proto"
+	"github.com/hyperledger/fabric/common/cauthdsl"
 	"github.com/hyperledger/fabric/common/metrics/disabled"
+	lm "github.com/hyperledger/fabric/common/mocks/ledger"
 	"github.com/hyperledger/fabric/core/common/privdata"
+	privdatamock "github.com/hyperledger/fabric/core/common/privdata/mock"
 	"github.com/hyperledger/fabric/core/ledger"
 	"github.com/hyperledger/fabric/gossip/api"
 	"github.com/hyperledger/fabric/gossip/comm"
@@ -30,7 +33,6 @@ import (
 	fcommon "github.com/hyperledger/fabric/protos/common"
 	proto "github.com/hyperledger/fabric/protos/gossip"
 	"github.com/hyperledger/fabric/protos/ledger/rwset"
-	"github.com/hyperledger/fabric/protos/peer"
 	"github.com/hyperledger/fabric/protoutil"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
@@ -61,105 +63,6 @@ func protoMatcher(pvds ...*proto.PvtDataDigest) func([]*proto.PvtDataDigest) boo
 
 var policyLock sync.Mutex
 var policy2Filter map[privdata.CollectionAccessPolicy]privdata.Filter
-
-type mockCollectionStore struct {
-	m            map[string]*mockCollectionAccess
-	accessFilter privdata.Filter
-}
-
-func newCollectionStore() *mockCollectionStore {
-	return &mockCollectionStore{
-		m:            make(map[string]*mockCollectionAccess),
-		accessFilter: nil,
-	}
-}
-
-func (cs *mockCollectionStore) withPolicy(collection string, btl uint64) *mockCollectionAccess {
-	coll := &mockCollectionAccess{cs: cs, btl: btl}
-	cs.m[collection] = coll
-	return coll
-}
-
-func (cs *mockCollectionStore) withAccessFilter(filter privdata.Filter) *mockCollectionStore {
-	cs.accessFilter = filter
-	return cs
-}
-
-func (cs mockCollectionStore) RetrieveCollectionAccessPolicy(cc fcommon.CollectionCriteria) (privdata.CollectionAccessPolicy, error) {
-	return cs.m[cc.Collection], nil
-}
-
-func (cs mockCollectionStore) RetrieveCollection(fcommon.CollectionCriteria) (privdata.Collection, error) {
-	panic("implement me")
-}
-
-func (cs mockCollectionStore) RetrieveCollectionConfigPackage(fcommon.CollectionCriteria) (*fcommon.CollectionConfigPackage, error) {
-	panic("implement me")
-}
-
-func (cs mockCollectionStore) RetrieveCollectionPersistenceConfigs(cc fcommon.CollectionCriteria) (privdata.CollectionPersistenceConfigs, error) {
-	return cs.m[cc.Collection], nil
-}
-
-func (cs mockCollectionStore) RetrieveReadWritePermission(cc fcommon.CollectionCriteria, sp *peer.SignedProposal, qe ledger.QueryExecutor) (bool, bool, error) {
-	panic("implement me")
-}
-
-func (cs mockCollectionStore) AccessFilter(channelName string, collectionPolicyConfig *fcommon.CollectionPolicyConfig) (privdata.Filter, error) {
-	if cs.accessFilter != nil {
-		return cs.accessFilter, nil
-	}
-	panic("implement me")
-}
-
-type mockCollectionAccess struct {
-	cs  *mockCollectionStore
-	btl uint64
-}
-
-func (mc *mockCollectionAccess) BlockToLive() uint64 {
-	return mc.btl
-}
-
-func (mc *mockCollectionAccess) thatMapsTo(peers ...string) *mockCollectionStore {
-	policyLock.Lock()
-	defer policyLock.Unlock()
-	policy2Filter[mc] = func(sd protoutil.SignedData) bool {
-		for _, peer := range peers {
-			if bytes.Equal(sd.Identity, []byte(peer)) {
-				return true
-			}
-		}
-		return false
-	}
-	return mc.cs
-}
-
-func (mc *mockCollectionAccess) MemberOrgs() []string {
-	return nil
-}
-
-func (mc *mockCollectionAccess) AccessFilter() privdata.Filter {
-	policyLock.Lock()
-	defer policyLock.Unlock()
-	return policy2Filter[mc]
-}
-
-func (mc *mockCollectionAccess) RequiredPeerCount() int {
-	return 0
-}
-
-func (mc *mockCollectionAccess) MaximumPeerCount() int {
-	return 0
-}
-
-func (mc *mockCollectionAccess) IsMemberOnlyRead() bool {
-	return false
-}
-
-func (mc *mockCollectionAccess) IsMemberOnlyWrite() bool {
-	return false
-}
 
 type dataRetrieverMock struct {
 	mock.Mock
@@ -279,21 +182,35 @@ type gossipNetwork struct {
 	peers []*mockGossip
 }
 
-func (gn *gossipNetwork) newPullerWithMetrics(metrics *metrics.PrivdataMetrics, id string, ps privdata.CollectionStore,
+func (gn *gossipNetwork) newPullerWithMetrics(
+	metrics *metrics.PrivdataMetrics, id string,
+	qeFactory privdata.QueryExecutorFactory,
+	ccInfoProvider privdata.ChaincodeInfoProvider,
+	idDeserializerFactory privdata.IdentityDeserializerFactory,
 	factory CollectionAccessFactory, knownMembers ...discovery.NetworkMember) *puller {
 	g := newMockGossip(&comm.RemotePeer{PKIID: common.PKIidType(id), Endpoint: id})
 	g.network = gn
 	g.On("PeersOfChannel", mock.Anything).Return(knownMembers)
 
-	p := NewPuller(metrics, ps, g, &dataRetrieverMock{}, factory, "A", 10)
+	cs := &privdata.SimpleCollectionStore{
+		QeFactory:             qeFactory,
+		CcInfoProvider:        ccInfoProvider,
+		IdDeserializerFactory: idDeserializerFactory,
+	}
+	p := NewPuller(metrics, cs, g, &dataRetrieverMock{}, factory, "A", 10)
 	gn.peers = append(gn.peers, g)
 	return p
 }
 
-func (gn *gossipNetwork) newPuller(id string, ps privdata.CollectionStore, factory CollectionAccessFactory,
+func (gn *gossipNetwork) newPuller(
+	id string,
+	qeFactory privdata.QueryExecutorFactory,
+	ccInfoProvider privdata.ChaincodeInfoProvider,
+	idDeserializerFactory privdata.IdentityDeserializerFactory,
+	factory CollectionAccessFactory,
 	knownMembers ...discovery.NetworkMember) *puller {
 	metrics := metrics.NewGossipMetrics(&disabled.Provider{}).PrivdataMetrics
-	return gn.newPullerWithMetrics(metrics, id, ps, factory, knownMembers...)
+	return gn.newPullerWithMetrics(metrics, id, qeFactory, ccInfoProvider, idDeserializerFactory, factory, knownMembers...)
 }
 
 func newPRWSet() []util.PrivateRWSet {
@@ -310,14 +227,35 @@ func TestPullerFromOnly1Peer(t *testing.T) {
 	// and succeeds - p1 asks from p2 (and not from p3!) for the
 	// expected digest
 	gn := &gossipNetwork{}
-	policyStore := newCollectionStore().withPolicy("col1", uint64(100)).thatMapsTo("p2")
+	// policyStore := newCollectionStore().withPolicy("col1", uint64(100)).thatMapsTo("p2")
+	queryExecutorFactoryMock := &privdatamock.QueryExecutorFactory{}
+	ccInfoProviderMock := &privdatamock.ChaincodeInfoProvider{}
+	idDeserializerFactoryMock := &privdatamock.IdentityDeserializerFactory{}
+	idDeserializerFactoryMock.GetIdentityDeserializerReturns(&mockDeserializer{})
+	queryExecutorFactoryMock.NewQueryExecutorReturns(&lm.MockQueryExecutor{}, nil)
+
+	signers := [][]byte{[]byte("p2"), []byte("p3")}
+	policyEnvelope := cauthdsl.Envelope(cauthdsl.Or(cauthdsl.SignedBy(0), cauthdsl.SignedBy(1)), signers)
+	accessPolicy := createCollectionPolicyConfig(policyEnvelope)
+
+	scc := &fcommon.StaticCollectionConfig{
+		Name:             "col1",
+		MemberOrgsPolicy: accessPolicy,
+		BlockToLive:      uint64(100),
+		MemberOnlyRead:   false,
+		MemberOnlyWrite:  false,
+	}
+	ccInfoProviderMock.CollectionInfoReturns(scc, nil)
+
 	factoryMock1 := &collectionAccessFactoryMock{}
 	policyMock1 := &collectionAccessPolicyMock{}
 	policyMock1.Setup(1, 2, func(data protoutil.SignedData) bool {
 		return bytes.Equal(data.Identity, []byte("p2"))
 	}, []string{"org1", "org2"}, false)
 	factoryMock1.On("AccessPolicy", mock.Anything, mock.Anything).Return(policyMock1, nil)
-	p1 := gn.newPuller("p1", policyStore, factoryMock1, membership(peerData{"p2", uint64(1)}, peerData{"p3", uint64(1)})...)
+	p1 := gn.newPuller("p1",
+		queryExecutorFactoryMock, ccInfoProviderMock, idDeserializerFactoryMock,
+		factoryMock1, membership(peerData{"p2", uint64(1)}, peerData{"p3", uint64(1)})...)
 
 	p2TransientStore := &util.PrivateRWSetWithConfig{
 		RWSet: newPRWSet(),
@@ -329,7 +267,7 @@ func TestPullerFromOnly1Peer(t *testing.T) {
 			},
 		},
 	}
-	policyStore = newCollectionStore().withPolicy("col1", uint64(100)).thatMapsTo("p1")
+	// policyStore = newCollectionStore().withPolicy("col1", uint64(100)).thatMapsTo("p1")
 	factoryMock2 := &collectionAccessFactoryMock{}
 	policyMock2 := &collectionAccessPolicyMock{}
 	policyMock2.Setup(1, 2, func(data protoutil.SignedData) bool {
@@ -337,7 +275,9 @@ func TestPullerFromOnly1Peer(t *testing.T) {
 	}, []string{"org1", "org2"}, false)
 	factoryMock2.On("AccessPolicy", mock.Anything, mock.Anything).Return(policyMock2, nil)
 
-	p2 := gn.newPuller("p2", policyStore, factoryMock2)
+	p2 := gn.newPuller("p2",
+		queryExecutorFactoryMock, ccInfoProviderMock, idDeserializerFactoryMock,
+		factoryMock2)
 	dig := &proto.PvtDataDigest{
 		TxId:       "txID1",
 		Collection: "col1",
@@ -354,6 +294,9 @@ func TestPullerFromOnly1Peer(t *testing.T) {
 
 	p2.PrivateDataRetriever.(*dataRetrieverMock).On("CollectionRWSet", mock.MatchedBy(protoMatcher(dig)), uint64(0)).Return(store, true, nil)
 
+	queryExecutorFactoryMock3 := &privdatamock.QueryExecutorFactory{}
+	ccInfoProviderMock3 := &privdatamock.ChaincodeInfoProvider{}
+	idDeserializerFactoryMock3 := &privdatamock.IdentityDeserializerFactory{}
 	factoryMock3 := &collectionAccessFactoryMock{}
 	policyMock3 := &collectionAccessPolicyMock{}
 	policyMock3.Setup(1, 2, func(data protoutil.SignedData) bool {
@@ -361,7 +304,7 @@ func TestPullerFromOnly1Peer(t *testing.T) {
 	}, []string{"org1", "org2"}, false)
 	factoryMock3.On("AccessPolicy", mock.Anything, mock.Anything).Return(policyMock3, nil)
 
-	p3 := gn.newPuller("p3", newCollectionStore(), factoryMock3)
+	p3 := gn.newPuller("p3", queryExecutorFactoryMock3, ccInfoProviderMock3, idDeserializerFactoryMock3, factoryMock3)
 	p3.PrivateDataRetriever.(*dataRetrieverMock).On("CollectionRWSet", mock.MatchedBy(protoMatcher(dig)), uint64(0)).Run(func(_ mock.Arguments) {
 		t.Fatal("p3 shouldn't have been selected for pull")
 	})
@@ -381,14 +324,34 @@ func TestPullerDataNotAvailable(t *testing.T) {
 	// Scenario: p1 pulls from p2 and not from p3
 	// but the data in p2 doesn't exist
 	gn := &gossipNetwork{}
-	policyStore := newCollectionStore().withPolicy("col1", uint64(100)).thatMapsTo("p2")
+	// policyStore := newCollectionStore().withPolicy("col1", uint64(100)).thatMapsTo("p2")
+	queryExecutorFactoryMock := &privdatamock.QueryExecutorFactory{}
+	ccInfoProviderMock := &privdatamock.ChaincodeInfoProvider{}
+	idDeserializerFactoryMock := &privdatamock.IdentityDeserializerFactory{}
+	idDeserializerFactoryMock.GetIdentityDeserializerReturns(&mockDeserializer{})
+	queryExecutorFactoryMock.NewQueryExecutorReturns(&lm.MockQueryExecutor{}, nil)
+
+	signers := [][]byte{[]byte("p1"), []byte("p2")}
+	policyEnvelope := cauthdsl.Envelope(cauthdsl.Or(cauthdsl.SignedBy(0), cauthdsl.SignedBy(1)), signers)
+	accessPolicy := createCollectionPolicyConfig(policyEnvelope)
+
+	scc := &fcommon.StaticCollectionConfig{
+		Name:             "col1",
+		MemberOrgsPolicy: accessPolicy,
+		BlockToLive:      uint64(100),
+		MemberOnlyRead:   false,
+		MemberOnlyWrite:  false,
+	}
+	ccInfoProviderMock.CollectionInfoReturns(scc, nil)
+
 	factoryMock := &collectionAccessFactoryMock{}
 	factoryMock.On("AccessPolicy", mock.Anything, mock.Anything).Return(&collectionAccessPolicyMock{}, nil)
 
-	p1 := gn.newPuller("p1", policyStore, factoryMock, membership(peerData{"p2", uint64(1)}, peerData{"p3", uint64(1)})...)
+	p1 := gn.newPuller("p1", queryExecutorFactoryMock, ccInfoProviderMock, idDeserializerFactoryMock,
+		factoryMock, membership(peerData{"p2", uint64(1)}, peerData{"p3", uint64(1)})...)
 
-	policyStore = newCollectionStore().withPolicy("col1", uint64(100)).thatMapsTo("p1")
-	p2 := gn.newPuller("p2", policyStore, factoryMock)
+	// policyStore = newCollectionStore().withPolicy("col1", uint64(100)).thatMapsTo("p1")
+	p2 := gn.newPuller("p2", queryExecutorFactoryMock, ccInfoProviderMock, idDeserializerFactoryMock, factoryMock)
 	dig := &proto.PvtDataDigest{
 		TxId:       "txID1",
 		Collection: "col1",
@@ -407,7 +370,7 @@ func TestPullerDataNotAvailable(t *testing.T) {
 
 	p2.PrivateDataRetriever.(*dataRetrieverMock).On("CollectionRWSet", mock.MatchedBy(protoMatcher(dig)), mock.Anything).Return(store, true, nil)
 
-	p3 := gn.newPuller("p3", newCollectionStore(), factoryMock)
+	p3 := gn.newPuller("p3", queryExecutorFactoryMock, ccInfoProviderMock, idDeserializerFactoryMock, factoryMock)
 	p3.PrivateDataRetriever.(*dataRetrieverMock).On("CollectionRWSet", mock.MatchedBy(protoMatcher(dig)), mock.Anything).Run(func(_ mock.Arguments) {
 		t.Fatal("p3 shouldn't have been selected for pull")
 	})
@@ -422,11 +385,30 @@ func TestPullerNoPeersKnown(t *testing.T) {
 	t.Parallel()
 	// Scenario: p1 doesn't know any peer and therefore fails fetching
 	gn := &gossipNetwork{}
-	policyStore := newCollectionStore().withPolicy("col1", uint64(100)).thatMapsTo("p2", "p3")
+	// policyStore := newCollectionStore().withPolicy("col1", uint64(100)).thatMapsTo("p2", "p3")
+	queryExecutorFactoryMock := &privdatamock.QueryExecutorFactory{}
+	ccInfoProviderMock := &privdatamock.ChaincodeInfoProvider{}
+	idDeserializerFactoryMock := &privdatamock.IdentityDeserializerFactory{}
+	idDeserializerFactoryMock.GetIdentityDeserializerReturns(&mockDeserializer{})
+	queryExecutorFactoryMock.NewQueryExecutorReturns(&lm.MockQueryExecutor{}, nil)
+
+	signers := [][]byte{[]byte("signer0"), []byte("signer1")}
+	policyEnvelope := cauthdsl.Envelope(cauthdsl.Or(cauthdsl.SignedBy(0), cauthdsl.SignedBy(1)), signers)
+	accessPolicy := createCollectionPolicyConfig(policyEnvelope)
+
+	scc := &fcommon.StaticCollectionConfig{
+		Name:             "col1",
+		MemberOrgsPolicy: accessPolicy,
+		BlockToLive:      uint64(100),
+		MemberOnlyRead:   false,
+		MemberOnlyWrite:  false,
+	}
+	ccInfoProviderMock.CollectionInfoReturns(scc, nil)
+
 	factoryMock := &collectionAccessFactoryMock{}
 	factoryMock.On("AccessPolicy", mock.Anything, mock.Anything).Return(&collectionAccessPolicyMock{}, nil)
 
-	p1 := gn.newPuller("p1", policyStore, factoryMock)
+	p1 := gn.newPuller("p1", queryExecutorFactoryMock, ccInfoProviderMock, idDeserializerFactoryMock, factoryMock)
 	dasf := &digestsAndSourceFactory{}
 	d2s := dasf.mapDigest(&privdatacommon.DigKey{Collection: "col1", TxId: "txID1", Namespace: "ns1"}).toSources().create()
 	fetchedMessages, err := p1.fetch(d2s)
@@ -439,11 +421,30 @@ func TestPullPeerFilterError(t *testing.T) {
 	t.Parallel()
 	// Scenario: p1 attempts to fetch for the wrong channel
 	gn := &gossipNetwork{}
-	policyStore := newCollectionStore().withPolicy("col1", uint64(100)).thatMapsTo("p2")
+	// policyStore := newCollectionStore().withPolicy("col1", uint64(100)).thatMapsTo("p2")
+	queryExecutorFactoryMock := &privdatamock.QueryExecutorFactory{}
+	ccInfoProviderMock := &privdatamock.ChaincodeInfoProvider{}
+	idDeserializerFactoryMock := &privdatamock.IdentityDeserializerFactory{}
+	idDeserializerFactoryMock.GetIdentityDeserializerReturns(&mockDeserializer{})
+	queryExecutorFactoryMock.NewQueryExecutorReturns(&lm.MockQueryExecutor{}, nil)
+
+	signers := [][]byte{[]byte("signer0"), []byte("signer1")}
+	policyEnvelope := cauthdsl.Envelope(cauthdsl.Or(cauthdsl.SignedBy(0), cauthdsl.SignedBy(1)), signers)
+	accessPolicy := createCollectionPolicyConfig(policyEnvelope)
+
+	scc := &fcommon.StaticCollectionConfig{
+		Name:             "col1",
+		MemberOrgsPolicy: accessPolicy,
+		BlockToLive:      uint64(100),
+		MemberOnlyRead:   false,
+		MemberOnlyWrite:  false,
+	}
+	ccInfoProviderMock.CollectionInfoReturns(scc, nil)
+
 	factoryMock := &collectionAccessFactoryMock{}
 	factoryMock.On("AccessPolicy", mock.Anything, mock.Anything).Return(&collectionAccessPolicyMock{}, nil)
 
-	p1 := gn.newPuller("p1", policyStore, factoryMock)
+	p1 := gn.newPuller("p1", queryExecutorFactoryMock, ccInfoProviderMock, idDeserializerFactoryMock, factoryMock)
 	gn.peers[0].On("PeerFilter", mock.Anything, mock.Anything).Return(nil, errors.New("Failed obtaining filter"))
 	dasf := &digestsAndSourceFactory{}
 	d2s := dasf.mapDigest(&privdatacommon.DigKey{Collection: "col1", TxId: "txID1", Namespace: "ns1"}).toSources().create()
@@ -458,7 +459,26 @@ func TestPullerPeerNotEligible(t *testing.T) {
 	// Scenario: p1 pulls from p2 or from p3
 	// but it's not eligible for pulling data from p2 or from p3
 	gn := &gossipNetwork{}
-	policyStore := newCollectionStore().withPolicy("col1", uint64(100)).thatMapsTo("p2", "p3")
+	// policyStore := newCollectionStore().withPolicy("col1", uint64(100)).thatMapsTo("p2", "p3")
+	queryExecutorFactoryMock := &privdatamock.QueryExecutorFactory{}
+	ccInfoProviderMock := &privdatamock.ChaincodeInfoProvider{}
+	idDeserializerFactoryMock := &privdatamock.IdentityDeserializerFactory{}
+	idDeserializerFactoryMock.GetIdentityDeserializerReturns(&mockDeserializer{})
+	queryExecutorFactoryMock.NewQueryExecutorReturns(&lm.MockQueryExecutor{}, nil)
+
+	signers := [][]byte{[]byte("p2"), []byte("p3")}
+	policyEnvelope := cauthdsl.Envelope(cauthdsl.Or(cauthdsl.SignedBy(0), cauthdsl.SignedBy(1)), signers)
+	accessPolicy := createCollectionPolicyConfig(policyEnvelope)
+
+	scc := &fcommon.StaticCollectionConfig{
+		Name:             "col1",
+		MemberOrgsPolicy: accessPolicy,
+		BlockToLive:      uint64(100),
+		MemberOnlyRead:   false,
+		MemberOnlyWrite:  false,
+	}
+	ccInfoProviderMock.CollectionInfoReturns(scc, nil)
+
 	factoryMock1 := &collectionAccessFactoryMock{}
 	accessPolicyMock1 := &collectionAccessPolicyMock{}
 	accessPolicyMock1.Setup(1, 2, func(data protoutil.SignedData) bool {
@@ -466,9 +486,11 @@ func TestPullerPeerNotEligible(t *testing.T) {
 	}, []string{"org1", "org2"}, false)
 	factoryMock1.On("AccessPolicy", mock.Anything, mock.Anything).Return(accessPolicyMock1, nil)
 
-	p1 := gn.newPuller("p1", policyStore, factoryMock1, membership(peerData{"p2", uint64(1)}, peerData{"p3", uint64(1)})...)
+	p1 := gn.newPuller("p1",
+		queryExecutorFactoryMock, ccInfoProviderMock, idDeserializerFactoryMock,
+		factoryMock1, membership(peerData{"p2", uint64(1)}, peerData{"p3", uint64(1)})...)
 
-	policyStore = newCollectionStore().withPolicy("col1", uint64(100)).thatMapsTo("p2")
+	// policyStore = newCollectionStore().withPolicy("col1", uint64(100)).thatMapsTo("p2")
 	factoryMock2 := &collectionAccessFactoryMock{}
 	accessPolicyMock2 := &collectionAccessPolicyMock{}
 	accessPolicyMock2.Setup(1, 2, func(data protoutil.SignedData) bool {
@@ -476,7 +498,7 @@ func TestPullerPeerNotEligible(t *testing.T) {
 	}, []string{"org1", "org2"}, false)
 	factoryMock2.On("AccessPolicy", mock.Anything, mock.Anything).Return(accessPolicyMock2, nil)
 
-	p2 := gn.newPuller("p2", policyStore, factoryMock2)
+	p2 := gn.newPuller("p2", queryExecutorFactoryMock, ccInfoProviderMock, idDeserializerFactoryMock, factoryMock2)
 
 	dig := &proto.PvtDataDigest{
 		TxId:       "txID1",
@@ -503,7 +525,7 @@ func TestPullerPeerNotEligible(t *testing.T) {
 
 	p2.PrivateDataRetriever.(*dataRetrieverMock).On("CollectionRWSet", mock.MatchedBy(protoMatcher(dig)), mock.Anything).Return(store, true, nil)
 
-	policyStore = newCollectionStore().withPolicy("col1", uint64(100)).thatMapsTo("p3")
+	// policyStore = newCollectionStore().withPolicy("col1", uint64(100)).thatMapsTo("p3")
 	factoryMock3 := &collectionAccessFactoryMock{}
 	accessPolicyMock3 := &collectionAccessPolicyMock{}
 	accessPolicyMock3.Setup(1, 2, func(data protoutil.SignedData) bool {
@@ -511,7 +533,7 @@ func TestPullerPeerNotEligible(t *testing.T) {
 	}, []string{"org1", "org2"}, false)
 	factoryMock3.On("AccessPolicy", mock.Anything, mock.Anything).Return(accessPolicyMock1, nil)
 
-	p3 := gn.newPuller("p3", policyStore, factoryMock3)
+	p3 := gn.newPuller("p3", queryExecutorFactoryMock, ccInfoProviderMock, idDeserializerFactoryMock, factoryMock3)
 	p3.PrivateDataRetriever.(*dataRetrieverMock).On("CollectionRWSet", mock.MatchedBy(protoMatcher(dig)), mock.Anything).Return(store, true, nil)
 	dasf := &digestsAndSourceFactory{}
 	d2s := dasf.mapDigest(&privdatacommon.DigKey{Collection: "col1", TxId: "txID1", Namespace: "ns1"}).toSources().create()
@@ -525,6 +547,25 @@ func TestPullerDifferentPeersDifferentCollections(t *testing.T) {
 	// Scenario: p1 pulls from p2 and from p3
 	// and each has different collections
 	gn := &gossipNetwork{}
+	queryExecutorFactoryMock := &privdatamock.QueryExecutorFactory{}
+	ccInfoProviderMock := &privdatamock.ChaincodeInfoProvider{}
+	idDeserializerFactoryMock := &privdatamock.IdentityDeserializerFactory{}
+	idDeserializerFactoryMock.GetIdentityDeserializerReturns(&mockDeserializer{})
+	queryExecutorFactoryMock.NewQueryExecutorReturns(&lm.MockQueryExecutor{}, nil)
+
+	signers := [][]byte{[]byte("signer0"), []byte("signer1")}
+	policyEnvelope := cauthdsl.Envelope(cauthdsl.Or(cauthdsl.SignedBy(0), cauthdsl.SignedBy(1)), signers)
+	accessPolicy := createCollectionPolicyConfig(policyEnvelope)
+
+	scc := &fcommon.StaticCollectionConfig{
+		Name:             "col1",
+		MemberOrgsPolicy: accessPolicy,
+		BlockToLive:      uint64(100),
+		MemberOnlyRead:   false,
+		MemberOnlyWrite:  false,
+	}
+	ccInfoProviderMock.CollectionInfoReturns(scc, nil)
+
 	factoryMock1 := &collectionAccessFactoryMock{}
 	accessPolicyMock1 := &collectionAccessPolicyMock{}
 	accessPolicyMock1.Setup(1, 2, func(data protoutil.SignedData) bool {
@@ -532,8 +573,10 @@ func TestPullerDifferentPeersDifferentCollections(t *testing.T) {
 	}, []string{"org1", "org2"}, false)
 	factoryMock1.On("AccessPolicy", mock.Anything, mock.Anything).Return(accessPolicyMock1, nil)
 
-	policyStore := newCollectionStore().withPolicy("col2", uint64(100)).thatMapsTo("p2").withPolicy("col3", uint64(100)).thatMapsTo("p3")
-	p1 := gn.newPuller("p1", policyStore, factoryMock1, membership(peerData{"p2", uint64(1)}, peerData{"p3", uint64(1)})...)
+	// policyStore := newCollectionStore().withPolicy("col2", uint64(100)).thatMapsTo("p2").withPolicy("col3", uint64(100)).thatMapsTo("p3")
+	p1 := gn.newPuller("p1",
+		queryExecutorFactoryMock, ccInfoProviderMock, idDeserializerFactoryMock,
+		factoryMock1, membership(peerData{"p2", uint64(1)}, peerData{"p3", uint64(1)})...)
 
 	p2TransientStore := &util.PrivateRWSetWithConfig{
 		RWSet: newPRWSet(),
@@ -546,7 +589,7 @@ func TestPullerDifferentPeersDifferentCollections(t *testing.T) {
 		},
 	}
 
-	policyStore = newCollectionStore().withPolicy("col2", uint64(100)).thatMapsTo("p1")
+	// policyStore = newCollectionStore().withPolicy("col2", uint64(100)).thatMapsTo("p1")
 	factoryMock2 := &collectionAccessFactoryMock{}
 	accessPolicyMock2 := &collectionAccessPolicyMock{}
 	accessPolicyMock2.Setup(1, 2, func(data protoutil.SignedData) bool {
@@ -554,7 +597,7 @@ func TestPullerDifferentPeersDifferentCollections(t *testing.T) {
 	}, []string{"org1", "org2"}, false)
 	factoryMock2.On("AccessPolicy", mock.Anything, mock.Anything).Return(accessPolicyMock2, nil)
 
-	p2 := gn.newPuller("p2", policyStore, factoryMock2)
+	p2 := gn.newPuller("p2", queryExecutorFactoryMock, ccInfoProviderMock, idDeserializerFactoryMock, factoryMock2)
 	dig1 := &proto.PvtDataDigest{
 		TxId:       "txID1",
 		Collection: "col2",
@@ -589,7 +632,7 @@ func TestPullerDifferentPeersDifferentCollections(t *testing.T) {
 			Namespace:  "ns1",
 		}: p3TransientStore,
 	}
-	policyStore = newCollectionStore().withPolicy("col3", uint64(100)).thatMapsTo("p1")
+	// policyStore = newCollectionStore().withPolicy("col3", uint64(100)).thatMapsTo("p1")
 	factoryMock3 := &collectionAccessFactoryMock{}
 	accessPolicyMock3 := &collectionAccessPolicyMock{}
 	accessPolicyMock3.Setup(1, 2, func(data protoutil.SignedData) bool {
@@ -597,7 +640,7 @@ func TestPullerDifferentPeersDifferentCollections(t *testing.T) {
 	}, []string{"org1", "org2"}, false)
 	factoryMock3.On("AccessPolicy", mock.Anything, mock.Anything).Return(accessPolicyMock3, nil)
 
-	p3 := gn.newPuller("p3", policyStore, factoryMock3)
+	p3 := gn.newPuller("p3", queryExecutorFactoryMock, ccInfoProviderMock, idDeserializerFactoryMock, factoryMock3)
 	dig2 := &proto.PvtDataDigest{
 		TxId:       "txID1",
 		Collection: "col3",
@@ -626,6 +669,25 @@ func TestPullerRetries(t *testing.T) {
 	// Only p3 considers p1 to be eligible to receive the data.
 	// The rest consider p1 as not eligible.
 	gn := &gossipNetwork{}
+	queryExecutorFactoryMock := &privdatamock.QueryExecutorFactory{}
+	ccInfoProviderMock := &privdatamock.ChaincodeInfoProvider{}
+	idDeserializerFactoryMock := &privdatamock.IdentityDeserializerFactory{}
+	idDeserializerFactoryMock.GetIdentityDeserializerReturns(&mockDeserializer{})
+	queryExecutorFactoryMock.NewQueryExecutorReturns(&lm.MockQueryExecutor{}, nil)
+
+	signers := [][]byte{[]byte("signer0"), []byte("signer1")}
+	policyEnvelope := cauthdsl.Envelope(cauthdsl.Or(cauthdsl.SignedBy(0), cauthdsl.SignedBy(1)), signers)
+	accessPolicy := createCollectionPolicyConfig(policyEnvelope)
+
+	scc := &fcommon.StaticCollectionConfig{
+		Name:             "col1",
+		MemberOrgsPolicy: accessPolicy,
+		BlockToLive:      uint64(100),
+		MemberOnlyRead:   false,
+		MemberOnlyWrite:  false,
+	}
+	ccInfoProviderMock.CollectionInfoReturns(scc, nil)
+
 	factoryMock1 := &collectionAccessFactoryMock{}
 	accessPolicyMock1 := &collectionAccessPolicyMock{}
 	accessPolicyMock1.Setup(1, 2, func(data protoutil.SignedData) bool {
@@ -636,9 +698,11 @@ func TestPullerRetries(t *testing.T) {
 	factoryMock1.On("AccessPolicy", mock.Anything, mock.Anything).Return(accessPolicyMock1, nil)
 
 	// p1
-	policyStore := newCollectionStore().withPolicy("col1", uint64(100)).thatMapsTo("p2", "p3", "p4", "p5")
-	p1 := gn.newPuller("p1", policyStore, factoryMock1, membership(peerData{"p2", uint64(1)},
-		peerData{"p3", uint64(1)}, peerData{"p4", uint64(1)}, peerData{"p5", uint64(1)})...)
+	// policyStore := newCollectionStore().withPolicy("col1", uint64(100)).thatMapsTo("p2", "p3", "p4", "p5")
+	p1 := gn.newPuller("p1",
+		queryExecutorFactoryMock, ccInfoProviderMock, idDeserializerFactoryMock,
+		factoryMock1, membership(peerData{"p2", uint64(1)},
+			peerData{"p3", uint64(1)}, peerData{"p4", uint64(1)}, peerData{"p5", uint64(1)})...)
 
 	// p2, p3, p4, and p5 have the same transient store
 	transientStore := &util.PrivateRWSetWithConfig{
@@ -667,7 +731,7 @@ func TestPullerRetries(t *testing.T) {
 	}
 
 	// p2
-	policyStore = newCollectionStore().withPolicy("col1", uint64(100)).thatMapsTo("p2")
+	// policyStore = newCollectionStore().withPolicy("col1", uint64(100)).thatMapsTo("p2")
 	factoryMock2 := &collectionAccessFactoryMock{}
 	accessPolicyMock2 := &collectionAccessPolicyMock{}
 	accessPolicyMock2.Setup(1, 2, func(data protoutil.SignedData) bool {
@@ -675,11 +739,11 @@ func TestPullerRetries(t *testing.T) {
 	}, []string{"org1", "org2"}, false)
 	factoryMock2.On("AccessPolicy", mock.Anything, mock.Anything).Return(accessPolicyMock2, nil)
 
-	p2 := gn.newPuller("p2", policyStore, factoryMock2)
+	p2 := gn.newPuller("p2", queryExecutorFactoryMock, ccInfoProviderMock, idDeserializerFactoryMock, factoryMock2)
 	p2.PrivateDataRetriever.(*dataRetrieverMock).On("CollectionRWSet", mock.MatchedBy(protoMatcher(dig)), uint64(0)).Return(store, true, nil)
 
 	// p3
-	policyStore = newCollectionStore().withPolicy("col1", uint64(100)).thatMapsTo("p1")
+	// policyStore = newCollectionStore().withPolicy("col1", uint64(100)).thatMapsTo("p1")
 	factoryMock3 := &collectionAccessFactoryMock{}
 	accessPolicyMock3 := &collectionAccessPolicyMock{}
 	accessPolicyMock3.Setup(1, 2, func(data protoutil.SignedData) bool {
@@ -687,11 +751,11 @@ func TestPullerRetries(t *testing.T) {
 	}, []string{"org1", "org2"}, false)
 	factoryMock3.On("AccessPolicy", mock.Anything, mock.Anything).Return(accessPolicyMock3, nil)
 
-	p3 := gn.newPuller("p3", policyStore, factoryMock3)
+	p3 := gn.newPuller("p3", queryExecutorFactoryMock, ccInfoProviderMock, idDeserializerFactoryMock, factoryMock3)
 	p3.PrivateDataRetriever.(*dataRetrieverMock).On("CollectionRWSet", mock.MatchedBy(protoMatcher(dig)), uint64(0)).Return(store, true, nil)
 
 	// p4
-	policyStore = newCollectionStore().withPolicy("col1", uint64(100)).thatMapsTo("p4")
+	// policyStore = newCollectionStore().withPolicy("col1", uint64(100)).thatMapsTo("p4")
 	factoryMock4 := &collectionAccessFactoryMock{}
 	accessPolicyMock4 := &collectionAccessPolicyMock{}
 	accessPolicyMock4.Setup(1, 2, func(data protoutil.SignedData) bool {
@@ -699,11 +763,11 @@ func TestPullerRetries(t *testing.T) {
 	}, []string{"org1", "org2"}, false)
 	factoryMock4.On("AccessPolicy", mock.Anything, mock.Anything).Return(accessPolicyMock4, nil)
 
-	p4 := gn.newPuller("p4", policyStore, factoryMock4)
+	p4 := gn.newPuller("p4", queryExecutorFactoryMock, ccInfoProviderMock, idDeserializerFactoryMock, factoryMock4)
 	p4.PrivateDataRetriever.(*dataRetrieverMock).On("CollectionRWSet", mock.MatchedBy(protoMatcher(dig)), uint64(0)).Return(store, true, nil)
 
 	// p5
-	policyStore = newCollectionStore().withPolicy("col1", uint64(100)).thatMapsTo("p5")
+	// policyStore = newCollectionStore().withPolicy("col1", uint64(100)).thatMapsTo("p5")
 	factoryMock5 := &collectionAccessFactoryMock{}
 	accessPolicyMock5 := &collectionAccessPolicyMock{}
 	accessPolicyMock5.Setup(1, 2, func(data protoutil.SignedData) bool {
@@ -711,7 +775,7 @@ func TestPullerRetries(t *testing.T) {
 	}, []string{"org1", "org2"}, false)
 	factoryMock5.On("AccessPolicy", mock.Anything, mock.Anything).Return(accessPolicyMock5, nil)
 
-	p5 := gn.newPuller("p5", policyStore, factoryMock5)
+	p5 := gn.newPuller("p5", queryExecutorFactoryMock, ccInfoProviderMock, idDeserializerFactoryMock, factoryMock5)
 	p5.PrivateDataRetriever.(*dataRetrieverMock).On("CollectionRWSet", mock.MatchedBy(protoMatcher(dig)), uint64(0)).Return(store, true, nil)
 
 	// Fetch from someone
@@ -732,6 +796,25 @@ func TestPullerPreferEndorsers(t *testing.T) {
 	// at the top priority for col1.
 	// for col2, only p2 should have the data, but its not an endorser of the data.
 	gn := &gossipNetwork{}
+	queryExecutorFactoryMock := &privdatamock.QueryExecutorFactory{}
+	ccInfoProviderMock := &privdatamock.ChaincodeInfoProvider{}
+	idDeserializerFactoryMock := &privdatamock.IdentityDeserializerFactory{}
+	idDeserializerFactoryMock.GetIdentityDeserializerReturns(&mockDeserializer{})
+	queryExecutorFactoryMock.NewQueryExecutorReturns(&lm.MockQueryExecutor{}, nil)
+
+	signers := [][]byte{[]byte("p3")}
+	policyEnvelope := cauthdsl.Envelope(cauthdsl.SignedBy(0), signers)
+	accessPolicy := createCollectionPolicyConfig(policyEnvelope)
+
+	scc := &fcommon.StaticCollectionConfig{
+		Name:             "col1",
+		MemberOrgsPolicy: accessPolicy,
+		BlockToLive:      uint64(100),
+		MemberOnlyRead:   false,
+		MemberOnlyWrite:  false,
+	}
+	ccInfoProviderMock.CollectionInfoReturns(scc, nil)
+
 	factoryMock := &collectionAccessFactoryMock{}
 	accessPolicyMock2 := &collectionAccessPolicyMock{}
 	accessPolicyMock2.Setup(1, 2, func(data protoutil.SignedData) bool {
@@ -739,13 +822,23 @@ func TestPullerPreferEndorsers(t *testing.T) {
 	}, []string{"org1", "org2"}, false)
 	factoryMock.On("AccessPolicy", mock.Anything, mock.Anything).Return(accessPolicyMock2, nil)
 
-	policyStore := newCollectionStore().
-		withPolicy("col1", uint64(100)).
-		thatMapsTo("p1", "p2", "p3", "p4", "p5").
-		withPolicy("col2", uint64(100)).
-		thatMapsTo("p1", "p2")
-	p1 := gn.newPuller("p1", policyStore, factoryMock, membership(peerData{"p2", uint64(1)},
-		peerData{"p3", uint64(1)}, peerData{"p4", uint64(1)}, peerData{"p5", uint64(1)})...)
+	// policyStore := newCollectionStore().
+	// withPolicy("col1", uint64(100)).
+	// thatMapsTo("p1", "p2", "p3", "p4", "p5").
+	// withPolicy("col2", uint64(100)).
+	// thatMapsTo("p1", "p2")
+	scc = &fcommon.StaticCollectionConfig{
+		Name:             "col2",
+		MemberOrgsPolicy: accessPolicy,
+		BlockToLive:      uint64(100),
+		MemberOnlyRead:   false,
+		MemberOnlyWrite:  false,
+	}
+	ccInfoProviderMock.CollectionInfoReturns(scc, nil)
+	p1 := gn.newPuller("p1",
+		queryExecutorFactoryMock, ccInfoProviderMock, idDeserializerFactoryMock,
+		factoryMock, membership(peerData{"p2", uint64(1)},
+			peerData{"p3", uint64(1)}, peerData{"p4", uint64(1)}, peerData{"p5", uint64(1)})...)
 
 	p3TransientStore := &util.PrivateRWSetWithConfig{
 		RWSet: newPRWSet(),
@@ -769,10 +862,10 @@ func TestPullerPreferEndorsers(t *testing.T) {
 		},
 	}
 
-	p2 := gn.newPuller("p2", policyStore, factoryMock)
-	p3 := gn.newPuller("p3", policyStore, factoryMock)
-	gn.newPuller("p4", policyStore, factoryMock)
-	gn.newPuller("p5", policyStore, factoryMock)
+	p2 := gn.newPuller("p2", queryExecutorFactoryMock, ccInfoProviderMock, idDeserializerFactoryMock, factoryMock)
+	p3 := gn.newPuller("p3", queryExecutorFactoryMock, ccInfoProviderMock, idDeserializerFactoryMock, factoryMock)
+	gn.newPuller("p4", queryExecutorFactoryMock, ccInfoProviderMock, idDeserializerFactoryMock, factoryMock)
+	gn.newPuller("p5", queryExecutorFactoryMock, ccInfoProviderMock, idDeserializerFactoryMock, factoryMock)
 
 	dig1 := &proto.PvtDataDigest{
 		TxId:       "txID1",
@@ -830,6 +923,25 @@ func TestPullerFetchReconciledItemsPreferPeersFromOriginalConfig(t *testing.T) {
 	// for col2, p3 was in the collection config while the data was created but was removed from collection and now only p2 should have the data.
 	// so obviously p2 should be selected for col2.
 	gn := &gossipNetwork{}
+	queryExecutorFactoryMock := &privdatamock.QueryExecutorFactory{}
+	ccInfoProviderMock := &privdatamock.ChaincodeInfoProvider{}
+	idDeserializerFactoryMock := &privdatamock.IdentityDeserializerFactory{}
+	idDeserializerFactoryMock.GetIdentityDeserializerReturns(&mockDeserializer{})
+	queryExecutorFactoryMock.NewQueryExecutorReturns(&lm.MockQueryExecutor{}, nil)
+
+	signers := [][]byte{[]byte("p2"), []byte("p3")}
+	policyEnvelope := cauthdsl.Envelope(cauthdsl.Or(cauthdsl.SignedBy(0), cauthdsl.SignedBy(1)), signers)
+	accessPolicy := createCollectionPolicyConfig(policyEnvelope)
+
+	scc := &fcommon.StaticCollectionConfig{
+		Name:             "col2",
+		MemberOrgsPolicy: accessPolicy,
+		BlockToLive:      uint64(100),
+		MemberOnlyRead:   false,
+		MemberOnlyWrite:  false,
+	}
+	ccInfoProviderMock.CollectionInfoReturns(scc, nil)
+
 	factoryMock := &collectionAccessFactoryMock{}
 	accessPolicyMock2 := &collectionAccessPolicyMock{}
 	accessPolicyMock2.Setup(1, 2, func(data protoutil.SignedData) bool {
@@ -837,17 +949,19 @@ func TestPullerFetchReconciledItemsPreferPeersFromOriginalConfig(t *testing.T) {
 	}, []string{"org1", "org2"}, false)
 	factoryMock.On("AccessPolicy", mock.Anything, mock.Anything).Return(accessPolicyMock2, nil)
 
-	policyStore := newCollectionStore().
-		withPolicy("col1", uint64(100)).
-		thatMapsTo("p1", "p2", "p3", "p4", "p5").
-		withPolicy("col2", uint64(100)).
-		thatMapsTo("p1", "p2").
-		withAccessFilter(func(data protoutil.SignedData) bool {
-			return bytes.Equal(data.Identity, []byte("p3"))
-		})
+	// policyStore := newCollectionStore().
+	// withPolicy("col1", uint64(100)).
+	// thatMapsTo("p1", "p2", "p3", "p4", "p5").
+	// withPolicy("col2", uint64(100)).
+	// thatMapsTo("p1", "p2").
+	// withAccessFilter(func(data protoutil.SignedData) bool {
+	// 	return bytes.Equal(data.Identity, []byte("p3"))
+	// })
 
-	p1 := gn.newPuller("p1", policyStore, factoryMock, membership(peerData{"p2", uint64(1)},
-		peerData{"p3", uint64(1)}, peerData{"p4", uint64(1)}, peerData{"p5", uint64(1)})...)
+	p1 := gn.newPuller("p1",
+		queryExecutorFactoryMock, ccInfoProviderMock, idDeserializerFactoryMock,
+		factoryMock, membership(peerData{"p2", uint64(1)},
+			peerData{"p3", uint64(1)}, peerData{"p4", uint64(1)}, peerData{"p5", uint64(1)})...)
 
 	p3TransientStore := &util.PrivateRWSetWithConfig{
 		RWSet: newPRWSet(),
@@ -871,10 +985,10 @@ func TestPullerFetchReconciledItemsPreferPeersFromOriginalConfig(t *testing.T) {
 		},
 	}
 
-	p2 := gn.newPuller("p2", policyStore, factoryMock)
-	p3 := gn.newPuller("p3", policyStore, factoryMock)
-	gn.newPuller("p4", policyStore, factoryMock)
-	gn.newPuller("p5", policyStore, factoryMock)
+	p2 := gn.newPuller("p2", queryExecutorFactoryMock, ccInfoProviderMock, idDeserializerFactoryMock, factoryMock)
+	p3 := gn.newPuller("p3", queryExecutorFactoryMock, ccInfoProviderMock, idDeserializerFactoryMock, factoryMock)
+	gn.newPuller("p4", queryExecutorFactoryMock, ccInfoProviderMock, idDeserializerFactoryMock, factoryMock)
+	gn.newPuller("p5", queryExecutorFactoryMock, ccInfoProviderMock, idDeserializerFactoryMock, factoryMock)
 
 	dig1 := &proto.PvtDataDigest{
 		TxId:       "txID1",
@@ -947,6 +1061,35 @@ func TestPullerAvoidPullingPurgedData(t *testing.T) {
 
 	t.Parallel()
 	gn := &gossipNetwork{}
+	queryExecutorFactoryMock := &privdatamock.QueryExecutorFactory{}
+	ccInfoProviderMock := &privdatamock.ChaincodeInfoProvider{}
+	idDeserializerFactoryMock := &privdatamock.IdentityDeserializerFactory{}
+	idDeserializerFactoryMock.GetIdentityDeserializerReturns(&mockDeserializer{})
+	queryExecutorFactoryMock.NewQueryExecutorReturns(&lm.MockQueryExecutor{}, nil)
+
+	signers := [][]byte{[]byte("p1"), []byte("p2")}
+	policyEnvelope := cauthdsl.Envelope(cauthdsl.Or(cauthdsl.SignedBy(0), cauthdsl.SignedBy(1)), signers)
+	accessPolicy := createCollectionPolicyConfig(policyEnvelope)
+
+	scc := []*fcommon.StaticCollectionConfig{
+		&fcommon.StaticCollectionConfig{
+			Name:             "col1",
+			MemberOrgsPolicy: accessPolicy,
+			BlockToLive:      uint64(100),
+			MemberOnlyRead:   false,
+			MemberOnlyWrite:  false,
+		},
+		&fcommon.StaticCollectionConfig{
+			Name:             "col2",
+			MemberOrgsPolicy: accessPolicy,
+			BlockToLive:      uint64(100),
+			MemberOnlyRead:   false,
+			MemberOnlyWrite:  false,
+		},
+	}
+	ccInfoProviderMock.CollectionInfoReturns(scc[1], nil)
+	ccInfoProviderMock.CollectionInfoReturnsOnCall(0, scc[0], nil)
+
 	factoryMock := &collectionAccessFactoryMock{}
 	accessPolicyMock2 := &collectionAccessPolicyMock{}
 	accessPolicyMock2.Setup(1, 2, func(data protoutil.SignedData) bool {
@@ -954,12 +1097,14 @@ func TestPullerAvoidPullingPurgedData(t *testing.T) {
 	}, []string{"org1", "org2"}, false)
 	factoryMock.On("AccessPolicy", mock.Anything, mock.Anything).Return(accessPolicyMock2, nil)
 
-	policyStore := newCollectionStore().withPolicy("col1", uint64(100)).thatMapsTo("p1", "p2", "p3").
-		withPolicy("col2", uint64(1000)).thatMapsTo("p1", "p2", "p3")
+	// policyStore := newCollectionStore().withPolicy("col1", uint64(100)).thatMapsTo("p1", "p2", "p3").
+	// withPolicy("col2", uint64(1000)).thatMapsTo("p1", "p2", "p3")
 
 	// p2 is at ledger height 1, while p2 is at 111 which is beyond BTL defined for col1 (100)
-	p1 := gn.newPuller("p1", policyStore, factoryMock, membership(peerData{"p2", uint64(1)},
-		peerData{"p3", uint64(111)})...)
+	p1 := gn.newPuller("p1",
+		queryExecutorFactoryMock, ccInfoProviderMock, idDeserializerFactoryMock,
+		factoryMock, membership(peerData{"p2", uint64(1)},
+			peerData{"p3", uint64(111)})...)
 
 	privateData1 := &util.PrivateRWSetWithConfig{
 		RWSet: newPRWSet(),
@@ -982,8 +1127,8 @@ func TestPullerAvoidPullingPurgedData(t *testing.T) {
 		},
 	}
 
-	p2 := gn.newPuller("p2", policyStore, factoryMock)
-	p3 := gn.newPuller("p3", policyStore, factoryMock)
+	p2 := gn.newPuller("p2", queryExecutorFactoryMock, ccInfoProviderMock, idDeserializerFactoryMock, factoryMock)
+	p3 := gn.newPuller("p3", queryExecutorFactoryMock, ccInfoProviderMock, idDeserializerFactoryMock, factoryMock)
 
 	dig1 := &proto.PvtDataDigest{
 		TxId:       "txID1",
@@ -1065,14 +1210,37 @@ func TestPullerIntegratedWithDataRetreiver(t *testing.T) {
 		return bytes.Equal(data.Identity, []byte("p1"))
 	}, []string{"org1", "org2"}, false)
 
+	queryExecutorFactoryMock := &privdatamock.QueryExecutorFactory{}
+	ccInfoProviderMock := &privdatamock.ChaincodeInfoProvider{}
+	idDeserializerFactoryMock := &privdatamock.IdentityDeserializerFactory{}
+	idDeserializerFactoryMock.GetIdentityDeserializerReturns(&mockDeserializer{})
+	queryExecutorFactoryMock.NewQueryExecutorReturns(&lm.MockQueryExecutor{}, nil)
+
+	signers := [][]byte{[]byte("signer0"), []byte("signer1")}
+	policyEnvelope := cauthdsl.Envelope(cauthdsl.Or(cauthdsl.SignedBy(0), cauthdsl.SignedBy(1)), signers)
+	accessPolicy := createCollectionPolicyConfig(policyEnvelope)
+
+	scc := &fcommon.StaticCollectionConfig{
+		Name:             "col1",
+		MemberOrgsPolicy: accessPolicy,
+		BlockToLive:      uint64(100),
+		MemberOnlyRead:   false,
+		MemberOnlyWrite:  false,
+	}
+	ccInfoProviderMock.CollectionInfoReturns(scc, nil)
+
 	factoryMock := &collectionAccessFactoryMock{}
 	factoryMock.On("AccessPolicy", mock.Anything, mock.Anything).Return(ap, nil)
 
-	policyStore := newCollectionStore().withPolicy(col1, uint64(1000)).thatMapsTo("p1", "p2").
-		withPolicy(col2, uint64(1000)).thatMapsTo("p1", "p2")
+	// policyStore := newCollectionStore().withPolicy(col1, uint64(1000)).thatMapsTo("p1", "p2").
+	// withPolicy(col2, uint64(1000)).thatMapsTo("p1", "p2")
 
-	p1 := gn.newPuller("p1", policyStore, factoryMock, membership(peerData{"p2", uint64(10)})...)
-	p2 := gn.newPuller("p2", policyStore, factoryMock, membership(peerData{"p1", uint64(1)})...)
+	p1 := gn.newPuller("p1",
+		queryExecutorFactoryMock, ccInfoProviderMock, idDeserializerFactoryMock,
+		factoryMock, membership(peerData{"p2", uint64(10)})...)
+	p2 := gn.newPuller("p2",
+		queryExecutorFactoryMock, ccInfoProviderMock, idDeserializerFactoryMock,
+		factoryMock, membership(peerData{"p1", uint64(1)})...)
 
 	dataStore := &mocks.DataStore{}
 	result := []*ledger.TxPvtData{
@@ -1148,7 +1316,28 @@ func TestPullerMetrics(t *testing.T) {
 	t.Parallel()
 	// Scenario: p1 pulls from p2 and sends metric reports
 	gn := &gossipNetwork{}
-	policyStore := newCollectionStore().withPolicy("col1", uint64(100)).thatMapsTo("p2")
+	// policyStore := newCollectionStore().withPolicy("col1", uint64(100)).thatMapsTo("p2")
+	queryExecutorFactoryMock := &privdatamock.QueryExecutorFactory{}
+	ccInfoProviderMock := &privdatamock.ChaincodeInfoProvider{}
+	idDeserializerFactoryMock := &privdatamock.IdentityDeserializerFactory{}
+	idDeserializerFactoryMock.GetIdentityDeserializerReturns(&mockDeserializer{})
+	queryExecutorFactoryMock.NewQueryExecutorReturns(&lm.MockQueryExecutor{}, nil)
+
+	signers := [][]byte{[]byte("p2")}
+	policyEnvelope := cauthdsl.Envelope(cauthdsl.SignedBy(0), signers)
+	accessPolicy := createCollectionPolicyConfig(policyEnvelope)
+
+	scc := &fcommon.StaticCollectionConfig{
+		Name:              "col1",
+		MemberOrgsPolicy:  accessPolicy,
+		BlockToLive:       uint64(100),
+		MemberOnlyRead:    false,
+		MemberOnlyWrite:   false,
+		RequiredPeerCount: 1,
+		MaximumPeerCount:  2,
+	}
+	ccInfoProviderMock.CollectionInfoReturns(scc, nil)
+
 	factoryMock1 := &collectionAccessFactoryMock{}
 	policyMock1 := &collectionAccessPolicyMock{}
 	policyMock1.Setup(1, 2, func(data protoutil.SignedData) bool {
@@ -1159,7 +1348,9 @@ func TestPullerMetrics(t *testing.T) {
 	testMetricProvider := gmetricsmocks.TestUtilConstructMetricProvider()
 	metrics := metrics.NewGossipMetrics(testMetricProvider.FakeProvider).PrivdataMetrics
 
-	p1 := gn.newPullerWithMetrics(metrics, "p1", policyStore, factoryMock1, membership(peerData{"p2", uint64(1)})...)
+	p1 := gn.newPullerWithMetrics(metrics, "p1",
+		queryExecutorFactoryMock, ccInfoProviderMock, idDeserializerFactoryMock,
+		factoryMock1, membership(peerData{"p2", uint64(1)})...)
 
 	p2TransientStore := &util.PrivateRWSetWithConfig{
 		RWSet: newPRWSet(),
@@ -1171,7 +1362,7 @@ func TestPullerMetrics(t *testing.T) {
 			},
 		},
 	}
-	policyStore = newCollectionStore().withPolicy("col1", uint64(100)).thatMapsTo("p1")
+	// policyStore = newCollectionStore().withPolicy("col1", uint64(100)).thatMapsTo("p1")
 	factoryMock2 := &collectionAccessFactoryMock{}
 	policyMock2 := &collectionAccessPolicyMock{}
 	policyMock2.Setup(1, 2, func(data protoutil.SignedData) bool {
@@ -1179,7 +1370,9 @@ func TestPullerMetrics(t *testing.T) {
 	}, []string{"org1", "org2"}, false)
 	factoryMock2.On("AccessPolicy", mock.Anything, mock.Anything).Return(policyMock2, nil)
 
-	p2 := gn.newPullerWithMetrics(metrics, "p2", policyStore, factoryMock2)
+	p2 := gn.newPullerWithMetrics(metrics, "p2",
+		queryExecutorFactoryMock, ccInfoProviderMock, idDeserializerFactoryMock,
+		factoryMock2)
 
 	dig := &proto.PvtDataDigest{
 		TxId:       "txID1",

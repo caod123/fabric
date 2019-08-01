@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package privdata
 
 import (
+	"bytes"
 	"encoding/asn1"
 	"encoding/hex"
 	"errors"
@@ -17,10 +18,14 @@ import (
 
 	pb "github.com/golang/protobuf/proto"
 	"github.com/hyperledger/fabric/bccsp/factory"
+	"github.com/hyperledger/fabric/common/cauthdsl"
 	"github.com/hyperledger/fabric/common/metrics/disabled"
+	lm "github.com/hyperledger/fabric/common/mocks/ledger"
 	util2 "github.com/hyperledger/fabric/common/util"
 	"github.com/hyperledger/fabric/core/common/privdata"
+	privdatamock "github.com/hyperledger/fabric/core/common/privdata/mock"
 	"github.com/hyperledger/fabric/core/ledger"
+
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/rwsetutil"
 	"github.com/hyperledger/fabric/core/transientstore"
 	"github.com/hyperledger/fabric/gossip/metrics"
@@ -29,11 +34,14 @@ import (
 	"github.com/hyperledger/fabric/gossip/privdata/mocks"
 	capabilitymock "github.com/hyperledger/fabric/gossip/privdata/mocks"
 	"github.com/hyperledger/fabric/gossip/util"
+	"github.com/hyperledger/fabric/msp"
 	"github.com/hyperledger/fabric/protos/common"
+	pbcommon "github.com/hyperledger/fabric/protos/common"
 	proto "github.com/hyperledger/fabric/protos/gossip"
 	"github.com/hyperledger/fabric/protos/ledger/rwset"
 	"github.com/hyperledger/fabric/protos/ledger/rwset/kvrwset"
-	"github.com/hyperledger/fabric/protos/msp"
+	mb "github.com/hyperledger/fabric/protos/msp"
+
 	"github.com/hyperledger/fabric/protos/peer"
 	transientstore2 "github.com/hyperledger/fabric/protos/transientstore"
 	"github.com/hyperledger/fabric/protoutil"
@@ -67,6 +75,67 @@ func fromCollectionCriteria(criteria common.CollectionCriteria) CollectionCriter
 		Namespace:  criteria.Namespace,
 		Channel:    criteria.Channel,
 	}
+}
+
+type mockIdentity struct {
+	idBytes []byte
+}
+
+func (id *mockIdentity) Anonymous() bool {
+	panic("implement me")
+}
+
+func (id *mockIdentity) ExpiresAt() time.Time {
+	return time.Time{}
+}
+
+func (id *mockIdentity) SatisfiesPrincipal(p *mb.MSPPrincipal) error {
+	if bytes.Equal(id.idBytes, p.Principal) {
+		return nil
+	}
+	return errors.New("Principals do not match")
+}
+
+func (id *mockIdentity) GetIdentifier() *msp.IdentityIdentifier {
+	return &msp.IdentityIdentifier{Mspid: "Mock", Id: string(id.idBytes)}
+}
+
+func (id *mockIdentity) GetMSPIdentifier() string {
+	return string(id.idBytes)
+}
+
+func (id *mockIdentity) Validate() error {
+	return nil
+}
+
+func (id *mockIdentity) GetOrganizationalUnits() []*msp.OUIdentifier {
+	return nil
+}
+
+func (id *mockIdentity) Verify(msg []byte, sig []byte) error {
+	if bytes.Equal(sig, []byte("badsigned")) {
+		return errors.New("Invalid signature")
+	}
+	return nil
+}
+
+func (id *mockIdentity) Serialize() ([]byte, error) {
+	return id.idBytes, nil
+}
+
+type mockDeserializer struct {
+	fail error
+}
+
+func (md *mockDeserializer) DeserializeIdentity(serializedIdentity []byte) (msp.Identity, error) {
+	if md.fail != nil {
+		return nil, md.fail
+	}
+	return &mockIdentity{idBytes: serializedIdentity}, nil
+}
+
+func (md *mockDeserializer) IsWellFormed(_ *mb.SerializedIdentity) error {
+	return nil
 }
 
 type persistCall struct {
@@ -240,7 +309,7 @@ func (fc *fetchCall) expectingEndorsers(orgs ...string) *fetchCall {
 		fc.fetcher.expectedEndorsers = make(map[string]struct{})
 	}
 	for _, org := range orgs {
-		sID := &msp.SerializedIdentity{Mspid: org, IdBytes: []byte(fmt.Sprintf("p0%s", org))}
+		sID := &mb.SerializedIdentity{Mspid: org, IdBytes: []byte(fmt.Sprintf("p0%s", org))}
 		b, _ := pb.Marshal(sID)
 		fc.fetcher.expectedEndorsers[string(b)] = struct{}{}
 	}
@@ -292,15 +361,51 @@ func (f *fetcherMock) fetch(dig2src dig2sources) (*privdatacommon.FetchedPvtData
 	return nil, args.Get(1).(error)
 }
 
+func createCollectionPolicyConfig(accessPolicy *pbcommon.SignaturePolicyEnvelope) *pbcommon.CollectionPolicyConfig {
+	cpcSp := &pbcommon.CollectionPolicyConfig_SignaturePolicy{
+		SignaturePolicy: accessPolicy,
+	}
+	cpc := &pbcommon.CollectionPolicyConfig{
+		Payload: cpcSp,
+	}
+	return cpc
+}
+
 func createcollectionStore(expectedSignedData protoutil.SignedData) *collectionStore {
+	mockQueryExecutorFactory := &privdatamock.QueryExecutorFactory{}
+	mockCCInfoProvider := &privdatamock.ChaincodeInfoProvider{}
+	mockIDDeserializerFactory := &privdatamock.IdentityDeserializerFactory{}
+	mockIDDeserializerFactory.GetIdentityDeserializerReturns(&mockDeserializer{})
+	mockQueryExecutorFactory.NewQueryExecutorReturns(&lm.MockQueryExecutor{}, nil)
+
+	var signers = [][]byte{[]byte("org1"), []byte("signer1")}
+	policyEnvelope := cauthdsl.Envelope(cauthdsl.Or(cauthdsl.SignedBy(0), cauthdsl.SignedBy(1)), signers)
+	accessPolicy := createCollectionPolicyConfig(policyEnvelope)
+
+	scc := &common.StaticCollectionConfig{
+		Name:             "c1",
+		MemberOrgsPolicy: accessPolicy,
+		MemberOnlyRead:   true,
+		MemberOnlyWrite:  true,
+	}
+
+	mockCCInfoProvider.CollectionInfoReturns(scc, nil)
+	cs := &privdata.SimpleCollectionStore{
+		QeFactory:             mockQueryExecutorFactory,
+		CcInfoProvider:        mockCCInfoProvider,
+		IdDeserializerFactory: mockIDDeserializerFactory,
+	}
+
 	return &collectionStore{
-		expectedSignedData: expectedSignedData,
-		policies:           make(map[collectionAccessPolicy]CollectionCriteria),
-		store:              make(map[CollectionCriteria]collectionAccessPolicy),
+		SimpleCollectionStore: cs,
+		expectedSignedData:    expectedSignedData,
+		policies:              make(map[collectionAccessPolicy]CollectionCriteria),
+		store:                 make(map[CollectionCriteria]collectionAccessPolicy),
 	}
 }
 
 type collectionStore struct {
+	*privdata.SimpleCollectionStore
 	expectedSignedData protoutil.SignedData
 	acceptsAll         bool
 	acceptsNone        bool
@@ -636,7 +741,7 @@ func TestCoordinatorStoreInvalidBlock(t *testing.T) {
 	metrics := metrics.NewGossipMetrics(&disabled.Provider{}).PrivdataMetrics
 
 	peerSelfSignedData := protoutil.SignedData{
-		Identity:  []byte{0, 1, 2},
+		Identity:  []byte("signer1"),
 		Signature: []byte{3, 4, 5},
 		Data:      []byte{6, 7, 8},
 	}
@@ -676,13 +781,12 @@ func TestCoordinatorStoreInvalidBlock(t *testing.T) {
 	capabilityProvider.On("Capabilities").Return(appCapability)
 	appCapability.On("StorePvtDataOfInvalidTx").Return(true)
 	coordinator := NewCoordinator(Support{
-		CollectionStore:    cs,
 		Committer:          committer,
 		Fetcher:            fetcher,
 		TransientStore:     store,
 		Validator:          &validatorMock{},
 		CapabilityProvider: capabilityProvider,
-	}, peerSelfSignedData, metrics, testConfig)
+	}, peerSelfSignedData, metrics, testConfig, cs.SimpleCollectionStore)
 	err := coordinator.StoreBlock(block, pvtData)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "Block.Metadata is nil or Block.Metadata lacks a Tx filter bitmap")
@@ -691,13 +795,12 @@ func TestCoordinatorStoreInvalidBlock(t *testing.T) {
 	block = bf.create()
 	pvtData = pdFactory.create()
 	coordinator = NewCoordinator(Support{
-		CollectionStore:    cs,
 		Committer:          committer,
 		Fetcher:            fetcher,
 		TransientStore:     store,
 		Validator:          &validatorMock{fmt.Errorf("failed validating block")},
 		CapabilityProvider: capabilityProvider,
-	}, peerSelfSignedData, metrics, testConfig)
+	}, peerSelfSignedData, metrics, testConfig, cs.SimpleCollectionStore)
 	err = coordinator.StoreBlock(block, pvtData)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed validating block")
@@ -706,12 +809,11 @@ func TestCoordinatorStoreInvalidBlock(t *testing.T) {
 	block = bf.withMetadataSize(100).create()
 	pvtData = pdFactory.create()
 	coordinator = NewCoordinator(Support{
-		CollectionStore: cs,
-		Committer:       committer,
-		Fetcher:         fetcher,
-		TransientStore:  store,
-		Validator:       &validatorMock{},
-	}, peerSelfSignedData, metrics, testConfig)
+		Committer:      committer,
+		Fetcher:        fetcher,
+		TransientStore: store,
+		Validator:      &validatorMock{},
+	}, peerSelfSignedData, metrics, testConfig, cs.SimpleCollectionStore)
 	err = coordinator.StoreBlock(block, pvtData)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "Block data size")
@@ -748,13 +850,12 @@ func TestCoordinatorStoreInvalidBlock(t *testing.T) {
 	capabilityProvider.On("Capabilities").Return(appCapability)
 	appCapability.On("StorePvtDataOfInvalidTx").Return(false)
 	coordinator = NewCoordinator(Support{
-		CollectionStore:    cs,
 		Committer:          committer,
 		Fetcher:            fetcher,
 		TransientStore:     store,
 		Validator:          &validatorMock{},
 		CapabilityProvider: capabilityProvider,
-	}, peerSelfSignedData, metrics, testConfig)
+	}, peerSelfSignedData, metrics, testConfig, cs.SimpleCollectionStore)
 	err = coordinator.StoreBlock(block, pvtData)
 	assert.NoError(t, err)
 	assertCommitHappened()
@@ -807,13 +908,12 @@ func TestCoordinatorStoreInvalidBlock(t *testing.T) {
 	capabilityProvider.On("Capabilities").Return(appCapability)
 	appCapability.On("StorePvtDataOfInvalidTx").Return(true)
 	coordinator = NewCoordinator(Support{
-		CollectionStore:    cs,
 		Committer:          committer,
 		Fetcher:            fetcher,
 		TransientStore:     store,
 		Validator:          &validatorMock{},
 		CapabilityProvider: capabilityProvider,
-	}, peerSelfSignedData, metrics, testConfig)
+	}, peerSelfSignedData, metrics, testConfig, cs.SimpleCollectionStore)
 	err = coordinator.StoreBlock(block, pvtData)
 	assert.NoError(t, err)
 	assertCommitHappened()
@@ -879,13 +979,12 @@ func TestCoordinatorStoreInvalidBlock(t *testing.T) {
 	pvtData = pdFactory.addRWSet().addNSRWSet("ns1", "c1", "c2").create()
 	committer.On("DoesPvtDataInfoExistInLedger", mock.Anything).Return(false, nil)
 	coordinator = NewCoordinator(Support{
-		CollectionStore:    cs,
 		Committer:          committer,
 		Fetcher:            fetcher,
 		TransientStore:     store,
 		Validator:          &validatorMock{},
 		CapabilityProvider: capabilityProvider,
-	}, peerSelfSignedData, metrics, testConfig)
+	}, peerSelfSignedData, metrics, testConfig, cs.SimpleCollectionStore)
 	err = coordinator.StoreBlock(block, pvtData)
 	assert.NoError(t, err)
 	assertCommitHappened()
@@ -911,7 +1010,7 @@ func TestCoordinatorToFilterOutPvtRWSetsWithWrongHash(t *testing.T) {
 		hash, hence it will fetch ns1:c1 from other peers
 	*/
 	peerSelfSignedData := protoutil.SignedData{
-		Identity:  []byte{0, 1, 2},
+		Identity:  []byte("signer1"),
 		Signature: []byte{3, 4, 5},
 		Data:      []byte{6, 7, 8},
 	}
@@ -968,13 +1067,12 @@ func TestCoordinatorToFilterOutPvtRWSetsWithWrongHash(t *testing.T) {
 	capabilityProvider.On("Capabilities").Return(appCapability)
 	appCapability.On("StorePvtDataOfInvalidTx").Return(true)
 	coordinator := NewCoordinator(Support{
-		CollectionStore:    cs,
 		Committer:          committer,
 		Fetcher:            fetcher,
 		TransientStore:     store,
 		Validator:          &validatorMock{},
 		CapabilityProvider: capabilityProvider,
-	}, peerSelfSignedData, metrics, testConfig)
+	}, peerSelfSignedData, metrics, testConfig, cs.SimpleCollectionStore)
 
 	fetcher.On("fetch", mock.Anything).expectingDigests([]privdatacommon.DigKey{
 		{
@@ -1014,7 +1112,7 @@ func TestCoordinatorToFilterOutPvtRWSetsWithWrongHash(t *testing.T) {
 
 func TestCoordinatorStoreBlock(t *testing.T) {
 	peerSelfSignedData := protoutil.SignedData{
-		Identity:  []byte{0, 1, 2},
+		Identity:  []byte("signer1"),
 		Signature: []byte{3, 4, 5},
 		Data:      []byte{6, 7, 8},
 	}
@@ -1078,13 +1176,12 @@ func TestCoordinatorStoreBlock(t *testing.T) {
 	capabilityProvider.On("Capabilities").Return(appCapability)
 	appCapability.On("StorePvtDataOfInvalidTx").Return(true)
 	coordinator := NewCoordinator(Support{
-		CollectionStore:    cs,
 		Committer:          committer,
 		Fetcher:            fetcher,
 		TransientStore:     store,
 		Validator:          &validatorMock{},
 		CapabilityProvider: capabilityProvider,
-	}, peerSelfSignedData, metrics, testConfig)
+	}, peerSelfSignedData, metrics, testConfig, cs.SimpleCollectionStore)
 	err := coordinator.StoreBlock(block, pvtData)
 	assert.NoError(t, err)
 	assertCommitHappened()
@@ -1165,16 +1262,13 @@ func TestCoordinatorStoreBlock(t *testing.T) {
 	// Scenario V: Block we got has private data alongside it but coordinator cannot retrieve collection access
 	// policy of collections due to databse unavailability error.
 	// we verify that the error propagates properly.
-	mockCs := &mocks.CollectionStore{}
-	mockCs.On("RetrieveCollectionAccessPolicy", mock.Anything).Return(nil, errors.New("test error"))
 	coordinator = NewCoordinator(Support{
-		CollectionStore:    mockCs,
 		Committer:          committer,
 		Fetcher:            fetcher,
 		TransientStore:     store,
 		Validator:          &validatorMock{},
 		CapabilityProvider: capabilityProvider,
-	}, peerSelfSignedData, metrics, testConfig)
+	}, peerSelfSignedData, metrics, testConfig, cs.SimpleCollectionStore)
 	err = coordinator.StoreBlock(block, nil)
 	assert.Error(t, err)
 	assert.Equal(t, "test error", err.Error())
@@ -1223,13 +1317,12 @@ func TestCoordinatorStoreBlock(t *testing.T) {
 	}).Return(nil)
 	committer.On("DoesPvtDataInfoExistInLedger", mock.Anything).Return(false, nil)
 	coordinator = NewCoordinator(Support{
-		CollectionStore:    cs,
 		Committer:          committer,
 		Fetcher:            fetcher,
 		TransientStore:     store,
 		Validator:          &validatorMock{},
 		CapabilityProvider: capabilityProvider,
-	}, peerSelfSignedData, metrics, testConfig)
+	}, peerSelfSignedData, metrics, testConfig, cs.SimpleCollectionStore)
 	err = coordinator.StoreBlock(block, nil)
 	assertPurged("tx3")
 	assert.NoError(t, err)
@@ -1267,13 +1360,12 @@ func TestCoordinatorStoreBlock(t *testing.T) {
 	}).Return(nil)
 	committer.On("DoesPvtDataInfoExistInLedger", mock.Anything).Return(false, nil)
 	coordinator = NewCoordinator(Support{
-		CollectionStore:    cs,
 		Committer:          committer,
 		Fetcher:            fetcher,
 		TransientStore:     store,
 		Validator:          &validatorMock{},
 		CapabilityProvider: capabilityProvider,
-	}, peerSelfSignedData, metrics, testConfig)
+	}, peerSelfSignedData, metrics, testConfig, cs.SimpleCollectionStore)
 
 	pvtData = pdFactory.addRWSet().addNSRWSet("ns3", "c3").create()
 	err = coordinator.StoreBlock(block, pvtData)
@@ -1329,13 +1421,12 @@ func TestCoordinatorStoreBlockWhenPvtDataExistInLedger(t *testing.T) {
 	capabilityProvider.On("Capabilities").Return(appCapability)
 	appCapability.On("StorePvtDataOfInvalidTx").Return(true)
 	coordinator := NewCoordinator(Support{
-		CollectionStore:    nil,
 		Committer:          committer,
 		Fetcher:            fetcher,
 		TransientStore:     nil,
 		Validator:          &validatorMock{},
 		CapabilityProvider: capabilityProvider,
-	}, peerSelfSignedData, metrics, testConfig)
+	}, peerSelfSignedData, metrics, testConfig, &privdata.SimpleCollectionStore{})
 	err := coordinator.StoreBlock(block, pvtData)
 	assert.NoError(t, err)
 	assertCommitHappened()
@@ -1425,13 +1516,12 @@ func TestProceedWithoutPrivateData(t *testing.T) {
 	capabilityProvider.On("Capabilities").Return(appCapability)
 	appCapability.On("StorePvtDataOfInvalidTx").Return(true)
 	coordinator := NewCoordinator(Support{
-		CollectionStore:    cs,
 		Committer:          committer,
 		Fetcher:            fetcher,
 		TransientStore:     store,
 		Validator:          &validatorMock{},
 		CapabilityProvider: capabilityProvider,
-	}, peerSelfSignedData, metrics, testConfig)
+	}, peerSelfSignedData, metrics, testConfig, cs.SimpleCollectionStore)
 	err := coordinator.StoreBlock(block, pvtData)
 	assert.NoError(t, err)
 	assertCommitHappened()
@@ -1486,13 +1576,12 @@ func TestProceedWithInEligiblePrivateData(t *testing.T) {
 	capabilityProvider.On("Capabilities").Return(appCapability)
 	appCapability.On("StorePvtDataOfInvalidTx").Return(true)
 	coordinator := NewCoordinator(Support{
-		CollectionStore:    cs,
 		Committer:          committer,
 		Fetcher:            nil,
 		TransientStore:     nil,
 		Validator:          &validatorMock{},
 		CapabilityProvider: capabilityProvider,
-	}, peerSelfSignedData, metrics, testConfig)
+	}, peerSelfSignedData, metrics, testConfig, cs.SimpleCollectionStore)
 	err := coordinator.StoreBlock(block, nil)
 	assert.NoError(t, err)
 	assertCommitHappened()
@@ -1501,7 +1590,7 @@ func TestProceedWithInEligiblePrivateData(t *testing.T) {
 func TestCoordinatorGetBlocks(t *testing.T) {
 	metrics := metrics.NewGossipMetrics(&disabled.Provider{}).PrivdataMetrics
 	sd := protoutil.SignedData{
-		Identity:  []byte{0, 1, 2},
+		Identity:  []byte("signer1"),
 		Signature: []byte{3, 4, 5},
 		Data:      []byte{6, 7, 8},
 	}
@@ -1516,13 +1605,12 @@ func TestCoordinatorGetBlocks(t *testing.T) {
 	capabilityProvider.On("Capabilities").Return(appCapability)
 	appCapability.On("StorePvtDataOfInvalidTx").Return(true)
 	coordinator := NewCoordinator(Support{
-		CollectionStore:    cs,
 		Committer:          committer,
 		Fetcher:            fetcher,
 		TransientStore:     store,
 		Validator:          &validatorMock{},
 		CapabilityProvider: capabilityProvider,
-	}, sd, metrics, testConfig)
+	}, sd, metrics, testConfig, cs.SimpleCollectionStore)
 
 	hash := util2.ComputeSHA256([]byte("rws-pre-image"))
 	bf := &blockFactory{
@@ -1545,13 +1633,12 @@ func TestCoordinatorGetBlocks(t *testing.T) {
 	}, nil)
 	committer.On("DoesPvtDataInfoExistInLedger", mock.Anything).Return(false, nil)
 	coordinator = NewCoordinator(Support{
-		CollectionStore:    cs,
 		Committer:          committer,
 		Fetcher:            fetcher,
 		TransientStore:     store,
 		Validator:          &validatorMock{},
 		CapabilityProvider: capabilityProvider,
-	}, sd, metrics, testConfig)
+	}, sd, metrics, testConfig, cs.SimpleCollectionStore)
 	expectedPrivData := (&pvtDataFactory{}).addRWSet().addNSRWSet("ns1", "c2").create()
 	block2, returnedPrivateData, err := coordinator.GetPvtDataAndBlockByNum(1, sd)
 	assert.NoError(t, err)
@@ -1602,13 +1689,12 @@ func TestPurgeByHeight(t *testing.T) {
 	capabilityProvider.On("Capabilities").Return(appCapability)
 	appCapability.On("StorePvtDataOfInvalidTx").Return(true)
 	coordinator := NewCoordinator(Support{
-		CollectionStore:    cs,
 		Committer:          committer,
 		Fetcher:            fetcher,
 		TransientStore:     store,
 		Validator:          &validatorMock{},
 		CapabilityProvider: capabilityProvider,
-	}, peerSelfSignedData, metrics, testConfig)
+	}, peerSelfSignedData, metrics, testConfig, cs.SimpleCollectionStore)
 
 	for i := 0; i <= 3000; i++ {
 		block := bf.create()
@@ -1638,13 +1724,12 @@ func TestCoordinatorStorePvtData(t *testing.T) {
 	capabilityProvider.On("Capabilities").Return(appCapability)
 	appCapability.On("StorePvtDataOfInvalidTx").Return(true)
 	coordinator := NewCoordinator(Support{
-		CollectionStore:    cs,
 		Committer:          committer,
 		Fetcher:            fetcher,
 		TransientStore:     store,
 		Validator:          &validatorMock{},
 		CapabilityProvider: capabilityProvider,
-	}, protoutil.SignedData{}, metrics, testConfig)
+	}, protoutil.SignedData{}, metrics, testConfig, cs.SimpleCollectionStore)
 	pvtData := (&pvtDataFactory{}).addRWSet().addNSRWSet("ns1", "c1").create()
 	// Green path: ledger height can be retrieved from ledger/committer
 	err := coordinator.StorePvtData("tx1", &transientstore2.TxPvtReadWriteSetWithConfigInfo{
@@ -1720,13 +1805,12 @@ func TestIgnoreReadOnlyColRWSets(t *testing.T) {
 	capabilityProvider.On("Capabilities").Return(appCapability)
 	appCapability.On("StorePvtDataOfInvalidTx").Return(true)
 	coordinator := NewCoordinator(Support{
-		CollectionStore:    cs,
 		Committer:          committer,
 		Fetcher:            fetcher,
 		TransientStore:     store,
 		Validator:          &validatorMock{},
 		CapabilityProvider: capabilityProvider,
-	}, peerSelfSignedData, metrics, testConfig)
+	}, peerSelfSignedData, metrics, testConfig, cs.SimpleCollectionStore)
 	// We pass a nil private data slice to indicate no pre-images though the block contains
 	// private data reads.
 	err := coordinator.StoreBlock(block, nil)
@@ -1769,14 +1853,13 @@ func TestCoordinatorMetrics(t *testing.T) {
 	capabilityProvider.On("Capabilities").Return(appCapability)
 	appCapability.On("StorePvtDataOfInvalidTx").Return(true)
 	coordinator := NewCoordinator(Support{
-		CollectionStore:    cs,
 		Committer:          committer,
 		Fetcher:            &fetcherMock{t: t},
 		TransientStore:     store,
 		Validator:          &validatorMock{},
 		ChainID:            "test",
 		CapabilityProvider: capabilityProvider,
-	}, peerSelfSignedData, metrics, testConfig)
+	}, peerSelfSignedData, metrics, testConfig, cs.SimpleCollectionStore)
 	err := coordinator.StoreBlock(block, pvtData)
 	assert.NoError(t, err)
 

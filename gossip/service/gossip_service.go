@@ -12,7 +12,6 @@ import (
 	corecomm "github.com/hyperledger/fabric/core/comm"
 	"github.com/hyperledger/fabric/core/committer"
 	"github.com/hyperledger/fabric/core/committer/txvalidator"
-	"github.com/hyperledger/fabric/core/common/privdata"
 	"github.com/hyperledger/fabric/core/deliverservice"
 	"github.com/hyperledger/fabric/core/deliverservice/blocksprovider"
 	"github.com/hyperledger/fabric/gossip/api"
@@ -285,12 +284,10 @@ func (g *GossipService) NewConfigEventer() ConfigProcessor {
 // Support aggregates functionality of several
 // interfaces required by gossip service
 type Support struct {
-	Validator            txvalidator.Validator
-	Committer            committer.Committer
-	Store                gossipprivdata.TransientStore
-	CollectionStore      privdata.CollectionStore
-	IdDeserializeFactory gossipprivdata.IdentityDeserializerFactory
-	CapabilityProvider   gossipprivdata.CapabilityProvider
+	Validator          txvalidator.Validator
+	Committer          committer.Committer
+	Store              gossipprivdata.TransientStore
+	CapabilityProvider gossipprivdata.CapabilityProvider
 }
 
 // DataStoreSupport aggregates interfaces capable
@@ -301,7 +298,7 @@ type DataStoreSupport struct {
 }
 
 // InitializeChannel allocates the state provider and should be invoked once per channel per execution
-func (g *GossipService) InitializeChannel(channelID string, endpoints []string, support Support) {
+func (g *GossipService) InitializeChannel(channelID string, endpoints []string, support Support, collectionStore SimpleCollectionStore) {
 	g.lock.Lock()
 	defer g.lock.Unlock()
 	// Initialize new state provider for given committer
@@ -317,9 +314,15 @@ func (g *GossipService) InitializeChannel(channelID string, endpoints []string, 
 	}
 	// Initialize private data fetcher
 	dataRetriever := gossipprivdata.NewDataRetriever(storeSupport)
-	collectionAccessFactory := gossipprivdata.NewCollectionAccessFactory(support.IdDeserializeFactory)
-	fetcher := gossipprivdata.NewPuller(g.metrics.PrivdataMetrics, support.CollectionStore, g.gossipSvc, dataRetriever,
-		collectionAccessFactory, channelID, g.serviceConfig.BtlPullMargin)
+	collectionAccessFactory := gossipprivdata.NewCollectionAccessFactory(collectionStore.IdDeserializeFactory)
+	fetcher := gossipprivdata.NewPuller(
+		g.metrics.PrivdataMetrics,
+		collectionStore,
+		g.gossipSvc,
+		dataRetriever,
+		collectionAccessFactory,
+		channelID,
+		g.serviceConfig.BtlPullMargin)
 
 	coordinatorConfig := gossipprivdata.CoordinatorConfig{
 		TransientBlockRetention:        g.serviceConfig.TransientstoreMaxBlockRetention,
@@ -328,13 +331,12 @@ func (g *GossipService) InitializeChannel(channelID string, endpoints []string, 
 	}
 	coordinator := gossipprivdata.NewCoordinator(gossipprivdata.Support{
 		ChainID:            channelID,
-		CollectionStore:    support.CollectionStore,
 		Validator:          support.Validator,
 		TransientStore:     support.Store,
 		Committer:          support.Committer,
 		Fetcher:            fetcher,
 		CapabilityProvider: support.CapabilityProvider,
-	}, g.createSelfSignedData(), g.metrics.PrivdataMetrics, coordinatorConfig)
+	}, g.createSelfSignedData(), g.metrics.PrivdataMetrics, coordinatorConfig, collectionStore)
 
 	privdataConfig := gossipprivdata.GlobalConfig()
 	var reconciler gossipprivdata.PvtDataReconciler

@@ -35,9 +35,9 @@ func TestNewSimpleCollectionStore(t *testing.T) {
 
 	cs := NewSimpleCollectionStore(mockQueryExecutorFactory, mockCCInfoProvider)
 	assert.NotNil(t, cs)
-	assert.Exactly(t, mockQueryExecutorFactory, cs.qeFactory)
-	assert.Exactly(t, mockCCInfoProvider, cs.ccInfoProvider)
-	assert.NotNil(t, cs.idDeserializerFactory)
+	assert.Exactly(t, mockQueryExecutorFactory, cs.QeFactory)
+	assert.Exactly(t, mockCCInfoProvider, cs.CcInfoProvider)
+	assert.NotNil(t, cs.IdDeserializerFactory)
 }
 
 func TestCollectionStore(t *testing.T) {
@@ -47,9 +47,9 @@ func TestCollectionStore(t *testing.T) {
 	mockIDDeserializerFactory.GetIdentityDeserializerReturns(&mockDeserializer{})
 
 	cs := &SimpleCollectionStore{
-		qeFactory:             mockQueryExecutorFactory,
-		ccInfoProvider:        mockCCInfoProvider,
-		idDeserializerFactory: mockIDDeserializerFactory,
+		QeFactory:             mockQueryExecutorFactory,
+		CcInfoProvider:        mockCCInfoProvider,
+		IdDeserializerFactory: mockIDDeserializerFactory,
 	}
 
 	mockQueryExecutorFactory.NewQueryExecutorReturns(nil, errors.New("new-query-executor-failed"))

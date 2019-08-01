@@ -62,16 +62,16 @@ func (i IdentityDeserializerFactoryFunc) GetIdentityDeserializer(chainID string)
 }
 
 type SimpleCollectionStore struct {
-	qeFactory             QueryExecutorFactory
-	ccInfoProvider        ChaincodeInfoProvider
-	idDeserializerFactory IdentityDeserializerFactory
+	QeFactory             QueryExecutorFactory
+	CcInfoProvider        ChaincodeInfoProvider
+	IdDeserializerFactory IdentityDeserializerFactory
 }
 
 func NewSimpleCollectionStore(qeFactory QueryExecutorFactory, ccInfoProvider ChaincodeInfoProvider) *SimpleCollectionStore {
 	return &SimpleCollectionStore{
-		qeFactory:      qeFactory,
-		ccInfoProvider: ccInfoProvider,
-		idDeserializerFactory: IdentityDeserializerFactoryFunc(func(chainID string) msp.IdentityDeserializer {
+		QeFactory:      qeFactory,
+		CcInfoProvider: ccInfoProvider,
+		IdDeserializerFactory: IdentityDeserializerFactoryFunc(func(chainID string) msp.IdentityDeserializer {
 			return mspmgmt.GetManagerForChain(chainID)
 		}),
 	}
@@ -80,13 +80,13 @@ func NewSimpleCollectionStore(qeFactory QueryExecutorFactory, ccInfoProvider Cha
 func (c *SimpleCollectionStore) retrieveCollectionConfigPackage(cc common.CollectionCriteria, qe ledger.QueryExecutor) (*common.CollectionConfigPackage, error) {
 	var err error
 	if qe == nil {
-		qe, err = c.qeFactory.NewQueryExecutor()
+		qe, err = c.QeFactory.NewQueryExecutor()
 		if err != nil {
 			return nil, errors.WithMessagef(err, "could not retrieve query executor for collection criteria %#v", cc)
 		}
 		defer qe.Done()
 	}
-	ccInfo, err := c.ccInfoProvider.ChaincodeInfo(cc.Channel, cc.Namespace, qe)
+	ccInfo, err := c.CcInfoProvider.ChaincodeInfo(cc.Channel, cc.Namespace, qe)
 	if err != nil {
 		return nil, err
 	}
@@ -126,13 +126,13 @@ func ParseCollectionConfig(colBytes []byte) (*common.CollectionConfigPackage, er
 func (c *SimpleCollectionStore) retrieveCollectionConfig(cc common.CollectionCriteria, qe ledger.QueryExecutor) (*common.StaticCollectionConfig, error) {
 	var err error
 	if qe == nil {
-		qe, err = c.qeFactory.NewQueryExecutor()
+		qe, err = c.QeFactory.NewQueryExecutor()
 		if err != nil {
 			return nil, errors.WithMessagef(err, "could not retrieve query executor for collection criteria %#v", cc)
 		}
 		defer qe.Done()
 	}
-	collConfig, err := c.ccInfoProvider.CollectionInfo(cc.Channel, cc.Namespace, cc.Collection, qe)
+	collConfig, err := c.CcInfoProvider.CollectionInfo(cc.Channel, cc.Namespace, cc.Collection, qe)
 	if err != nil {
 		return nil, err
 	}
@@ -148,7 +148,7 @@ func (c *SimpleCollectionStore) retrieveSimpleCollection(cc common.CollectionCri
 		return nil, err
 	}
 	sc := &SimpleCollection{}
-	err = sc.Setup(staticCollectionConfig, c.idDeserializerFactory.GetIdentityDeserializer(cc.Channel))
+	err = sc.Setup(staticCollectionConfig, c.IdDeserializerFactory.GetIdentityDeserializer(cc.Channel))
 	if err != nil {
 		return nil, errors.WithMessagef(err, "error setting up collection for collection criteria %#v", cc)
 	}
@@ -157,7 +157,7 @@ func (c *SimpleCollectionStore) retrieveSimpleCollection(cc common.CollectionCri
 
 func (c *SimpleCollectionStore) AccessFilter(channelName string, collectionPolicyConfig *common.CollectionPolicyConfig) (Filter, error) {
 	sc := &SimpleCollection{}
-	err := sc.setupAccessPolicy(collectionPolicyConfig, c.idDeserializerFactory.GetIdentityDeserializer(channelName))
+	err := sc.setupAccessPolicy(collectionPolicyConfig, c.IdDeserializerFactory.GetIdentityDeserializer(channelName))
 	if err != nil {
 		return nil, err
 	}

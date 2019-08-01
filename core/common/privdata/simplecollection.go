@@ -44,20 +44,20 @@ func NewSimpleCollection(collectionConfig *common.StaticCollectionConfig, deseri
 // collectionStore
 func NewSimpleCollectionByCollectionCriteria(collectionStore *SimpleCollectionStore, cc common.CollectionCriteria) (*SimpleCollection, error) {
 	sc := &SimpleCollection{}
-	qe, err := collectionStore.qeFactory.NewQueryExecutor()
+	qe, err := collectionStore.QeFactory.NewQueryExecutor()
 	if err != nil {
 		err = errors.Wrapf(err, "Could not retrieve query executor for collection criteria %#v", cc)
 		return sc, err
 	}
 	defer qe.Done()
 
-	staticCollectionConfig, err := collectionStore.ccInfoProvider.CollectionInfo(cc.Channel, cc.Namespace, cc.Collection, qe)
+	staticCollectionConfig, err := collectionStore.CcInfoProvider.CollectionInfo(cc.Channel, cc.Namespace, cc.Collection, qe)
 	if _, isNoSuchCollectionError := err.(NoSuchCollectionError); err != nil && !isNoSuchCollectionError {
 		err = errors.Wrapf(err, "Failed obtaining policy for %#v due to database unavailability: %s", cc, err)
 		return sc, err
 	}
 
-	sc, err = NewSimpleCollection(staticCollectionConfig, collectionStore.idDeserializerFactory.GetIdentityDeserializer(cc.Channel))
+	sc, err = NewSimpleCollection(staticCollectionConfig, collectionStore.IdDeserializerFactory.GetIdentityDeserializer(cc.Channel))
 	if err != nil {
 		err = errors.Wrapf(err, "Failed obtaining collection policy for channel %s, chaincode %s, config %s", cc.Channel, cc.Namespace, cc.Collection)
 	}
