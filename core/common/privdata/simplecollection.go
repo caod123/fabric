@@ -39,6 +39,32 @@ func NewSimpleCollection(collectionConfig *common.StaticCollectionConfig, deseri
 	return sc, err
 }
 
+// NewSimpleCollectionByCollectionCriteria returns a simple collection object based
+// on a given CollectionCriteria by getting a CollectionConfig using dependencies in
+// collectionStore
+func NewSimpleCollectionByCollectionCriteria(collectionStore *SimpleCollectionStore, cc common.CollectionCriteria) (*SimpleCollection, error) {
+	sc := &SimpleCollection{}
+	qe, err := collectionStore.qeFactory.NewQueryExecutor()
+	if err != nil {
+		err = errors.Wrapf(err, "Could not retrieve query executor for collection criteria %#v", cc)
+		return sc, err
+	}
+	defer qe.Done()
+
+	staticCollectionConfig, err := collectionStore.ccInfoProvider.CollectionInfo(cc.Channel, cc.Namespace, cc.Collection, qe)
+	if _, isNoSuchCollectionError := err.(NoSuchCollectionError); err != nil && !isNoSuchCollectionError {
+		err = errors.Wrapf(err, "Failed obtaining policy for %#v due to database unavailability: %s", cc, err)
+		return sc, err
+	}
+
+	sc, err = NewSimpleCollection(staticCollectionConfig, collectionStore.idDeserializerFactory.GetIdentityDeserializer(cc.Channel))
+	if err != nil {
+		err = errors.Wrapf(err, "Failed obtaining collection policy for channel %s, chaincode %s, config %s", cc.Channel, cc.Namespace, cc.Collection)
+	}
+
+	return sc, err
+}
+
 // CollectionID returns the collection's ID
 func (sc *SimpleCollection) CollectionID() string {
 	return sc.name

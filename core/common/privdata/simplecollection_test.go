@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/hyperledger/fabric/common/cauthdsl"
+	lm "github.com/hyperledger/fabric/common/mocks/ledger"
+	"github.com/hyperledger/fabric/core/common/privdata/mock"
 	"github.com/hyperledger/fabric/msp"
 	pb "github.com/hyperledger/fabric/protos/common"
 	mb "github.com/hyperledger/fabric/protos/msp"
@@ -126,6 +128,84 @@ func TestNewSimpleCollectionWithGoodConfig(t *testing.T) {
 
 	// check name
 	assert.True(t, sc.CollectionID() == "test collection")
+
+	// check members
+	members := sc.MemberOrgs()
+	assert.True(t, members[0] == "signer0")
+	assert.True(t, members[1] == "signer1")
+
+	// check required peer count
+	assert.True(t, sc.RequiredPeerCount() == 1)
+}
+
+func TestNewSimpleCollectionByCollectionCriteriaWithBadCollectionCriteria(t *testing.T) {
+	mockQueryExecutorFactory := &mock.QueryExecutorFactory{}
+	mockCCInfoProvider := &mock.ChaincodeInfoProvider{}
+	mockIDDeserializerFactory := &mock.IdentityDeserializerFactory{}
+	mockIDDeserializerFactory.GetIdentityDeserializerReturns(&mockDeserializer{})
+
+	cs := &SimpleCollectionStore{
+		qeFactory:             mockQueryExecutorFactory,
+		ccInfoProvider:        mockCCInfoProvider,
+		idDeserializerFactory: mockIDDeserializerFactory,
+	}
+
+	mockQueryExecutorFactory.NewQueryExecutorReturns(nil, errors.New("new-query-executor-failed"))
+	_, err := NewSimpleCollectionByCollectionCriteria(cs, pb.CollectionCriteria{})
+	assert.Contains(t, err.Error(), "Could not retrieve query executor for collection criteria")
+
+	mockQueryExecutorFactory.NewQueryExecutorReturns(&lm.MockQueryExecutor{}, nil)
+	_, err = NewSimpleCollectionByCollectionCriteria(cs, pb.CollectionCriteria{Namespace: "non-existing-chaincode"})
+	assert.Contains(t, err.Error(), "Nil config passed to collection setup")
+
+	ccr := pb.CollectionCriteria{Channel: "ch", Namespace: "cc", Collection: "mycollection"}
+	mockCCInfoProvider.CollectionInfoReturns(nil, errors.New("collection-info-error"))
+	_, err = NewSimpleCollectionByCollectionCriteria(cs, ccr)
+	assert.Contains(t, err.Error(), "database unavailability")
+
+	scc := &pb.StaticCollectionConfig{Name: "mycollection"}
+	mockCCInfoProvider.CollectionInfoReturns(scc, nil)
+	_, err = NewSimpleCollectionByCollectionCriteria(cs, ccr)
+	assert.Contains(t, err.Error(), "Failed obtaining collection policy for channel")
+}
+
+func TestNewSimpleCollectionByCollectionCriteriaWithGoodCollectionCriteria(t *testing.T) {
+	mockQueryExecutorFactory := &mock.QueryExecutorFactory{}
+	mockCCInfoProvider := &mock.ChaincodeInfoProvider{}
+	mockIDDeserializerFactory := &mock.IdentityDeserializerFactory{}
+	mockIDDeserializerFactory.GetIdentityDeserializerReturns(&mockDeserializer{})
+
+	cs := &SimpleCollectionStore{
+		qeFactory:             mockQueryExecutorFactory,
+		ccInfoProvider:        mockCCInfoProvider,
+		idDeserializerFactory: mockIDDeserializerFactory,
+	}
+
+	var signers = [][]byte{[]byte("signer0"), []byte("signer1")}
+	policyEnvelope := cauthdsl.Envelope(cauthdsl.Or(cauthdsl.SignedBy(0), cauthdsl.SignedBy(1)), signers)
+	accessPolicy := createCollectionPolicyConfig(policyEnvelope)
+
+	scc := &pb.StaticCollectionConfig{
+		Name:              "mycollection",
+		MemberOrgsPolicy:  accessPolicy,
+		RequiredPeerCount: 1,
+		MemberOnlyRead:    false,
+		MemberOnlyWrite:   false,
+	}
+
+	mockQueryExecutorFactory.NewQueryExecutorReturns(&lm.MockQueryExecutor{}, nil)
+	mockCCInfoProvider.CollectionInfoReturns(scc, nil)
+
+	// set up simple collection with valid data
+	sc, err := NewSimpleCollectionByCollectionCriteria(cs, pb.CollectionCriteria{
+		Channel:    "ch",
+		Namespace:  "cc",
+		Collection: "mycollection",
+	})
+	assert.NoError(t, err)
+
+	// check name
+	assert.True(t, sc.CollectionID() == "mycollection")
 
 	// check members
 	members := sc.MemberOrgs()
