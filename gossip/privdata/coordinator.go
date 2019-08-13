@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"fmt"
+	"reflect"
 	"time"
 
 	"github.com/golang/protobuf/proto"
@@ -284,7 +285,7 @@ func (c *coordinator) StoreBlock(block *common.Block, privateDataSets util.PvtDa
 	}
 
 	// populate missing RWSets for ineligible collections to be passed to the ledger
-	for _, missingRWS := range privateInfo.missingRWSButIneligible {
+	for missingRWS := range privateInfo.missingRWSButIneligible {
 		blockAndPvtData.MissingPvtData.Add(missingRWS.seqInBlock, missingRWS.namespace, missingRWS.collection, false)
 	}
 
@@ -384,6 +385,7 @@ func (c *coordinator) fetchMissingFromTransientStore(missing rwSetKeysByTxIDs, o
 }
 
 func (c *coordinator) fetchFromTransientStore(txAndSeq txAndSeqInBlock, filter ledger.PvtNsCollFilter, ownedRWsets map[rwSetKey][]byte) {
+	fmt.Printf("\nfetching from transiesnt store\n")
 	iterator, err := c.TransientStore.GetTxPvtRWSetByTxid(txAndSeq.txID, filter)
 	if err != nil {
 		logger.Warning("Failed obtaining iterator from transient store:", err)
@@ -512,6 +514,16 @@ func (s rwsetByKeys) bySeqsInBlock() map[uint64]readWriteSets {
 }
 
 type rwsetKeys map[rwSetKey]struct{}
+
+// ContainsRwsetKey returns whether the map contains a specific rwSetKey
+func (s rwsetKeys) Contains(key rwSetKey) bool {
+	for k := range s {
+		if reflect.DeepEqual(k, key) {
+			return true
+		}
+	}
+	return false
+}
 
 // String returns a string representation of the rwsetKeys
 func (s rwsetKeys) String() string {
@@ -689,11 +701,13 @@ func endorsersFromOrgs(ns string, col string, endorsers []*peer.Endorsement, org
 }
 
 type privateDataInfo struct {
-	sources                 map[rwSetKey][]*peer.Endorsement
-	missingKeysByTxIDs      rwSetKeysByTxIDs
-	missingKeys             rwsetKeys
-	txns                    txns
-	missingRWSButIneligible []rwSetKey
+	sources                        map[rwSetKey][]*peer.Endorsement
+	missingKeysByTxIDs             rwSetKeysByTxIDs
+	missingKeys                    rwsetKeys
+	txns                           txns
+	missingRWSButIneligible        rwsetKeys
+	missingRWSButIneligibleByTxIDs rwSetKeysByTxIDs
+	privateRWsetsInBlock           map[rwSetKey]struct{}
 }
 
 // listMissingPrivateData identifies missing private write sets and attempts to retrieve them from local transient store
@@ -709,13 +723,15 @@ func (c *coordinator) listMissingPrivateData(block *common.Block, ownedRWsets ma
 	sources := make(map[rwSetKey][]*peer.Endorsement)
 	privateRWsetsInBlock := make(map[rwSetKey]struct{})
 	missing := make(rwSetKeysByTxIDs)
+	missingButIneligible := make(rwSetKeysByTxIDs)
 	data := blockData(block.Data.Data)
 	bi := &transactionInspector{
-		sources:              sources,
-		missingKeys:          missing,
-		ownedRWsets:          ownedRWsets,
-		privateRWsetsInBlock: privateRWsetsInBlock,
-		coordinator:          c,
+		sources:                 sources,
+		missingKeys:             missing,
+		ownedRWsets:             ownedRWsets,
+		privateRWsetsInBlock:    privateRWsetsInBlock,
+		coordinator:             c,
+		missingRWSButIneligible: missingButIneligible,
 	}
 	storePvtDataOfInvalidTx := c.Support.CapabilityProvider.Capabilities().StorePvtDataOfInvalidTx()
 	txList, err := data.forEachTxn(storePvtDataOfInvalidTx, txsFilter, bi.inspectTransaction)
@@ -724,10 +740,10 @@ func (c *coordinator) listMissingPrivateData(block *common.Block, ownedRWsets ma
 	}
 
 	privateInfo := &privateDataInfo{
-		sources:                 sources,
-		missingKeysByTxIDs:      missing,
-		txns:                    txList,
-		missingRWSButIneligible: bi.missingRWSButIneligible,
+		sources:                        sources,
+		missingKeysByTxIDs:             missing,
+		txns:                           txList,
+		missingRWSButIneligibleByTxIDs: bi.missingRWSButIneligible,
 	}
 
 	logger.Debug("Retrieving private write sets for", len(privateInfo.missingKeysByTxIDs), "transactions from transient store")
@@ -751,6 +767,8 @@ func (c *coordinator) listMissingPrivateData(block *common.Block, ownedRWsets ma
 		return exists
 	})
 
+	privateInfo.missingRWSButIneligible = privateInfo.missingRWSButIneligibleByTxIDs.flatten()
+
 	return privateInfo, nil
 }
 
@@ -760,7 +778,7 @@ type transactionInspector struct {
 	missingKeys             rwSetKeysByTxIDs
 	sources                 map[rwSetKey][]*peer.Endorsement
 	ownedRWsets             map[rwSetKey][]byte
-	missingRWSButIneligible []rwSetKey
+	missingRWSButIneligible rwSetKeysByTxIDs
 }
 
 func (bi *transactionInspector) inspectTransaction(seqInBlock uint64, chdr *common.ChannelHeader, txRWSet *rwsetutil.TxRwSet, endorsers []*peer.Endorsement) error {
@@ -793,20 +811,20 @@ func (bi *transactionInspector) inspectTransaction(seqInBlock uint64, chdr *comm
 				collection: hashedCollection.CollectionName,
 			}
 
+			txAndSeq := txAndSeqInBlock{
+				txID:       chdr.TxId,
+				seqInBlock: seqInBlock,
+			}
 			if !bi.isEligible(policy, ns.NameSpace, hashedCollection.CollectionName) {
 				logger.Debugf("Peer is not eligible for collection, channel [%s], chaincode [%s], "+
 					"collection name [%s], txID [%s] the policy is [%#v]. Skipping.",
 					chdr.ChannelId, ns.NameSpace, hashedCollection.CollectionName, chdr.TxId, policy)
-				bi.missingRWSButIneligible = append(bi.missingRWSButIneligible, key)
+				bi.missingRWSButIneligible[txAndSeq] = append(bi.missingRWSButIneligible[txAndSeq], key)
 				continue
 			}
 
 			bi.privateRWsetsInBlock[key] = struct{}{}
 			if _, exists := bi.ownedRWsets[key]; !exists {
-				txAndSeq := txAndSeqInBlock{
-					txID:       chdr.TxId,
-					seqInBlock: seqInBlock,
-				}
 				bi.missingKeys[txAndSeq] = append(bi.missingKeys[txAndSeq], key)
 				bi.sources[key] = endorsersFromOrgs(ns.NameSpace, hashedCollection.CollectionName, endorsers, policy.MemberOrgs())
 			}

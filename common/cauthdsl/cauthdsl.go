@@ -86,10 +86,10 @@ func compile(policy *cb.SignaturePolicy, identities []*mb.MSPPrincipal, deserial
 		}
 		signedByID := identities[t.SignedBy]
 		return func(signedData []IdentityAndSignature, used []bool) bool {
-			cauthdslLogger.Debugf("%p signed by %d principal evaluation starts (used %v)", signedData, t.SignedBy, used)
+			fmt.Printf("%p signed by %d principal evaluation starts (used %v)", signedData, t.SignedBy, used)
 			for i, sd := range signedData {
 				if used[i] {
-					cauthdslLogger.Debugf("%p skipping identity %d because it has already been used", signedData, i)
+					fmt.Printf("%p skipping identity %d because it has already been used", signedData, i)
 					continue
 				}
 				if cauthdslLogger.IsEnabledFor(zapcore.DebugLevel) {
@@ -98,25 +98,25 @@ func compile(policy *cb.SignaturePolicy, identities []*mb.MSPPrincipal, deserial
 				}
 				identity, err := sd.Identity()
 				if err != nil {
-					cauthdslLogger.Errorf("Principal deserialization failure (%s) for identity %d", err, i)
+					fmt.Printf("Principal deserialization failure (%s) for identity %d", err, i)
 					continue
 				}
 				err = identity.SatisfiesPrincipal(signedByID)
 				if err != nil {
-					cauthdslLogger.Debugf("%p identity %d does not satisfy principal: %s", signedData, i, err)
+					fmt.Printf("%p identity %d does not satisfy principal: %s", signedData, i, err)
 					continue
 				}
-				cauthdslLogger.Debugf("%p principal matched by identity %d", signedData, i)
+				fmt.Printf("%p principal matched by identity %d", signedData, i)
 				err = sd.Verify()
 				if err != nil {
-					cauthdslLogger.Debugf("%p signature for identity %d is invalid: %s", signedData, i, err)
+					fmt.Printf("%p signature for identity %d is invalid: %s", signedData, i, err)
 					continue
 				}
-				cauthdslLogger.Debugf("%p principal evaluation succeeds for identity %d", signedData, i)
+				fmt.Printf("%p principal evaluation succeeds for identity %d", signedData, i)
 				used[i] = true
 				return true
 			}
-			cauthdslLogger.Debugf("%p principal evaluation fails", signedData)
+			fmt.Printf("%p principal evaluation fails", signedData)
 			return false
 		}, nil
 	default:

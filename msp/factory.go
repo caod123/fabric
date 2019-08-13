@@ -7,6 +7,8 @@ SPDX-License-Identifier: Apache-2.0
 package msp
 
 import (
+	"fmt"
+
 	"github.com/pkg/errors"
 )
 
@@ -46,10 +48,12 @@ type IdemixNewOpts struct {
 
 // New create a new MSP instance depending on the passed Opts
 func New(opts NewOpts) (MSP, error) {
+	fmt.Printf("\nmsp version: %v\n", opts.GetVersion())
 	switch opts.(type) {
 	case *BCCSPNewOpts:
 		switch opts.GetVersion() {
 		case MSPv1_0:
+			fmt.Print("bcssp version0")
 			return newBccspMsp(MSPv1_0)
 		case MSPv1_1:
 			return newBccspMsp(MSPv1_1)

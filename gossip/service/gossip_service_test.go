@@ -82,7 +82,8 @@ func TestInitGossipService(t *testing.T) {
 	grpcServer := grpc.NewServer()
 	endpoint, socket := getAvailablePort(t)
 
-	msptesttools.LoadMSPSetupForTesting()
+	err := msptesttools.LoadMSPSetupForTesting()
+	assert.NoError(t, err)
 	signer := mgmt.GetLocalSigningIdentityOrPanic()
 
 	messageCryptoService := peergossip.NewMCS(&mocks.ChannelPolicyManagerGetter{}, signer, mgmt.NewDeserializersManager())

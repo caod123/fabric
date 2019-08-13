@@ -120,8 +120,9 @@ type PeerLedger interface {
 	// The pvt data is filtered by the list of 'ns/collections' supplied in the filter
 	// A nil filter does not filter any results and causes retrieving all the pvt data for the given blockNum
 	GetPvtDataByNum(blockNum uint64, filter PvtNsCollFilter) ([]*TxPvtData, error)
+	// Commit commits the block as per the new block commit flow and is expected to be called under a capability
+	Commit(block *common.Block) error
 	// CommitLegacy commits the block and the corresponding pvt data in an atomic operation following the v14 validation/commit path
-	// TODO: add a new Commit() path that replaces CommitLegacy() for the validation refactor described in FAB-12221
 	CommitLegacy(blockAndPvtdata *BlockAndPvtData, commitOpts *CommitOptions) error
 	// GetConfigHistoryRetriever returns the ConfigHistoryRetriever
 	GetConfigHistoryRetriever() (ConfigHistoryRetriever, error)
@@ -638,6 +639,34 @@ type InvalidTxError struct {
 
 func (e *InvalidTxError) Error() string {
 	return e.Msg
+}
+
+// BlockPvtdataProvider is a dependency that is implemented by coordinator/gossip for ledger to be able to retrieve
+// the private data for the committing block potially by a combination of source such as private data supplied with block (gossip-piggy-back),
+// transient store, and a pull from other eligible peers
+type BlockPvtdataProvider interface {
+	// RetrievePrivatedata retrieves the private
+	RetrievePrivatedata(txPvtdataInfo []*TxPvtdataInfo) (BlockPvtdata, error)
+	// Done indicates that any resources held by this instance can be released
+	Done()
+}
+
+// TxPvtdataInfo captures
+type TxPvtdataInfo struct {
+	TxID                  string
+	SeqInBlock            uint64
+	CollectionPvtdataInfo []*CollectionPvtdataInfo
+}
+type CollectionPvtdataInfo struct {
+	Namespace, Collection string
+	ExpectedHash          []byte
+	CollectionConfig      *common.StaticCollectionConfig
+	Endorsers             []*peer.Endorsement
+}
+
+type BlockPvtdata struct {
+	PvtData        TxPvtDataMap
+	MissingPvtData TxMissingPvtDataMap
 }
 
 //go:generate counterfeiter -o mock/state_listener.go -fake-name StateListener . StateListener

@@ -8,6 +8,7 @@ package msp
 
 import (
 	"encoding/pem"
+	"fmt"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -150,6 +151,7 @@ func SetupBCCSPKeystoreConfig(bccspConfig *factory.FactoryOpts, keystoreDir stri
 		}
 	}
 
+	fmt.Printf("\nbccspconfig: %#v\n", bccspConfig.SwOpts)
 	return bccspConfig
 }
 

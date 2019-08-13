@@ -12,6 +12,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/hex"
 	"encoding/pem"
+	"fmt"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/hyperledger/fabric/bccsp"
@@ -110,9 +111,11 @@ func newBccspMsp(version MSPVersion) (MSP, error) {
 	mspLogger.Debugf("Creating BCCSP-based MSP instance")
 
 	bccsp := factory.GetDefault()
+	fmt.Printf("\nbccsp: %v\n", bccsp)
 	theMsp := &bccspmsp{}
 	theMsp.version = version
 	theMsp.bccsp = bccsp
+	fmt.Printf("\nthe msp: %v\n", theMsp)
 	switch version {
 	case MSPv1_0:
 		theMsp.internalSetupFunc = theMsp.setupV1
@@ -216,6 +219,8 @@ func (msp *bccspmsp) getSigningIdentityFromConf(sidInfo *m.SigningIdentityInfo) 
 
 	// Find the matching private key in the BCCSP keystore
 	privKey, err := msp.bccsp.GetKey(pubKey.SKI())
+	fmt.Printf("\nprivkey: %v\nerr: %v\n", privKey, err)
+	fmt.Printf("\npubkey SKI: %v\n", pubKey.SKI())
 	// Less Secure: Attempt to import Private Key from KeyInfo, if BCCSP was not able to find the key
 	if err != nil {
 		mspLogger.Debugf("Could not find SKI [%s], trying KeyMaterial field: %+v\n", hex.EncodeToString(pubKey.SKI()), err)
