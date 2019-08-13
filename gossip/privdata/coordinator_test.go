@@ -673,8 +673,9 @@ func TestCoordinatorStoreInvalidBlock(t *testing.T) {
 	committer.On("DoesPvtDataInfoExistInLedger", mock.Anything).Return(false, nil)
 	capabilityProvider := &capabilitymock.CapabilityProvider{}
 	appCapability := &capabilitymock.AppCapabilities{}
-	capabilityProvider.On("Capabilities").Return(appCapability)
+	appCapability.On("V2_0Validation").Return(false)
 	appCapability.On("StorePvtDataOfInvalidTx").Return(true)
+	capabilityProvider.On("Capabilities").Return(appCapability)
 	coordinator := NewCoordinator(Support{
 		CollectionStore:    cs,
 		Committer:          committer,
@@ -706,11 +707,12 @@ func TestCoordinatorStoreInvalidBlock(t *testing.T) {
 	block = bf.withMetadataSize(100).create()
 	pvtData = pdFactory.create()
 	coordinator = NewCoordinator(Support{
-		CollectionStore: cs,
-		Committer:       committer,
-		Fetcher:         fetcher,
-		TransientStore:  store,
-		Validator:       &validatorMock{},
+		CollectionStore:    cs,
+		Committer:          committer,
+		Fetcher:            fetcher,
+		TransientStore:     store,
+		Validator:          &validatorMock{},
+		CapabilityProvider: capabilityProvider,
 	}, peerSelfSignedData, metrics, testConfig)
 	err = coordinator.StoreBlock(block, pvtData)
 	assert.Error(t, err)
@@ -745,8 +747,9 @@ func TestCoordinatorStoreInvalidBlock(t *testing.T) {
 
 	capabilityProvider = &capabilitymock.CapabilityProvider{}
 	appCapability = &capabilitymock.AppCapabilities{}
-	capabilityProvider.On("Capabilities").Return(appCapability)
 	appCapability.On("StorePvtDataOfInvalidTx").Return(false)
+	appCapability.On("V2_0Validation").Return(false)
+	capabilityProvider.On("Capabilities").Return(appCapability)
 	coordinator = NewCoordinator(Support{
 		CollectionStore:    cs,
 		Committer:          committer,
@@ -804,8 +807,9 @@ func TestCoordinatorStoreInvalidBlock(t *testing.T) {
 	committer.On("DoesPvtDataInfoExistInLedger", mock.Anything).Return(false, nil)
 	capabilityProvider = &capabilitymock.CapabilityProvider{}
 	appCapability = &capabilitymock.AppCapabilities{}
-	capabilityProvider.On("Capabilities").Return(appCapability)
 	appCapability.On("StorePvtDataOfInvalidTx").Return(true)
+	appCapability.On("V2_0Validation").Return(false)
+	capabilityProvider.On("Capabilities").Return(appCapability)
 	coordinator = NewCoordinator(Support{
 		CollectionStore:    cs,
 		Committer:          committer,
@@ -965,8 +969,9 @@ func TestCoordinatorToFilterOutPvtRWSetsWithWrongHash(t *testing.T) {
 
 	capabilityProvider := &capabilitymock.CapabilityProvider{}
 	appCapability := &capabilitymock.AppCapabilities{}
-	capabilityProvider.On("Capabilities").Return(appCapability)
 	appCapability.On("StorePvtDataOfInvalidTx").Return(true)
+	appCapability.On("V2_0Validation").Return(false)
+	capabilityProvider.On("Capabilities").Return(appCapability)
 	coordinator := NewCoordinator(Support{
 		CollectionStore:    cs,
 		Committer:          committer,
@@ -1075,8 +1080,9 @@ func TestCoordinatorStoreBlock(t *testing.T) {
 
 	capabilityProvider := &capabilitymock.CapabilityProvider{}
 	appCapability := &capabilitymock.AppCapabilities{}
-	capabilityProvider.On("Capabilities").Return(appCapability)
 	appCapability.On("StorePvtDataOfInvalidTx").Return(true)
+	appCapability.On("V2_0Validation").Return(false)
+	capabilityProvider.On("Capabilities").Return(appCapability)
 	coordinator := NewCoordinator(Support{
 		CollectionStore:    cs,
 		Committer:          committer,
@@ -1326,8 +1332,9 @@ func TestCoordinatorStoreBlockWhenPvtDataExistInLedger(t *testing.T) {
 
 	capabilityProvider := &capabilitymock.CapabilityProvider{}
 	appCapability := &capabilitymock.AppCapabilities{}
-	capabilityProvider.On("Capabilities").Return(appCapability)
 	appCapability.On("StorePvtDataOfInvalidTx").Return(true)
+	appCapability.On("V2_0Validation").Return(false)
+	capabilityProvider.On("Capabilities").Return(appCapability)
 	coordinator := NewCoordinator(Support{
 		CollectionStore:    nil,
 		Committer:          committer,
@@ -1422,8 +1429,9 @@ func TestProceedWithoutPrivateData(t *testing.T) {
 
 	capabilityProvider := &capabilitymock.CapabilityProvider{}
 	appCapability := &capabilitymock.AppCapabilities{}
-	capabilityProvider.On("Capabilities").Return(appCapability)
 	appCapability.On("StorePvtDataOfInvalidTx").Return(true)
+	appCapability.On("V2_0Validation").Return(false)
+	capabilityProvider.On("Capabilities").Return(appCapability)
 	coordinator := NewCoordinator(Support{
 		CollectionStore:    cs,
 		Committer:          committer,
@@ -1483,8 +1491,9 @@ func TestProceedWithInEligiblePrivateData(t *testing.T) {
 
 	capabilityProvider := &capabilitymock.CapabilityProvider{}
 	appCapability := &capabilitymock.AppCapabilities{}
-	capabilityProvider.On("Capabilities").Return(appCapability)
 	appCapability.On("StorePvtDataOfInvalidTx").Return(true)
+	appCapability.On("V2_0Validation").Return(false)
+	capabilityProvider.On("Capabilities").Return(appCapability)
 	coordinator := NewCoordinator(Support{
 		CollectionStore:    cs,
 		Committer:          committer,
@@ -1513,8 +1522,9 @@ func TestCoordinatorGetBlocks(t *testing.T) {
 
 	capabilityProvider := &capabilitymock.CapabilityProvider{}
 	appCapability := &capabilitymock.AppCapabilities{}
-	capabilityProvider.On("Capabilities").Return(appCapability)
 	appCapability.On("StorePvtDataOfInvalidTx").Return(true)
+	appCapability.On("V2_0Validation").Return(false)
+	capabilityProvider.On("Capabilities").Return(appCapability)
 	coordinator := NewCoordinator(Support{
 		CollectionStore:    cs,
 		Committer:          committer,
@@ -1599,8 +1609,9 @@ func TestPurgeByHeight(t *testing.T) {
 
 	capabilityProvider := &capabilitymock.CapabilityProvider{}
 	appCapability := &capabilitymock.AppCapabilities{}
-	capabilityProvider.On("Capabilities").Return(appCapability)
 	appCapability.On("StorePvtDataOfInvalidTx").Return(true)
+	appCapability.On("V2_0Validation").Return(false)
+	capabilityProvider.On("Capabilities").Return(appCapability)
 	coordinator := NewCoordinator(Support{
 		CollectionStore:    cs,
 		Committer:          committer,
@@ -1635,8 +1646,9 @@ func TestCoordinatorStorePvtData(t *testing.T) {
 
 	capabilityProvider := &capabilitymock.CapabilityProvider{}
 	appCapability := &capabilitymock.AppCapabilities{}
-	capabilityProvider.On("Capabilities").Return(appCapability)
 	appCapability.On("StorePvtDataOfInvalidTx").Return(true)
+	appCapability.On("V2_0Validation").Return(false)
+	capabilityProvider.On("Capabilities").Return(appCapability)
 	coordinator := NewCoordinator(Support{
 		CollectionStore:    cs,
 		Committer:          committer,
@@ -1717,8 +1729,9 @@ func TestIgnoreReadOnlyColRWSets(t *testing.T) {
 
 	capabilityProvider := &capabilitymock.CapabilityProvider{}
 	appCapability := &capabilitymock.AppCapabilities{}
-	capabilityProvider.On("Capabilities").Return(appCapability)
 	appCapability.On("StorePvtDataOfInvalidTx").Return(true)
+	appCapability.On("V2_0Validation").Return(false)
+	capabilityProvider.On("Capabilities").Return(appCapability)
 	coordinator := NewCoordinator(Support{
 		CollectionStore:    cs,
 		Committer:          committer,
@@ -1766,8 +1779,9 @@ func TestCoordinatorMetrics(t *testing.T) {
 
 	capabilityProvider := &capabilitymock.CapabilityProvider{}
 	appCapability := &capabilitymock.AppCapabilities{}
-	capabilityProvider.On("Capabilities").Return(appCapability)
 	appCapability.On("StorePvtDataOfInvalidTx").Return(true)
+	appCapability.On("V2_0Validation").Return(false)
+	capabilityProvider.On("Capabilities").Return(appCapability)
 	coordinator := NewCoordinator(Support{
 		CollectionStore:    cs,
 		Committer:          committer,

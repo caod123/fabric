@@ -30,6 +30,9 @@ import (
 // change
 type Committer interface {
 
+	// Commit block into the ledger
+	Commit(block *common.Block, pvtdataProvider ledger.BlockPvtdataProvider, commitOpts *ledger.CommitOptions) error
+
 	// CommitLegacy block and private data into the ledger
 	CommitLegacy(blockAndPvtData *ledger.BlockAndPvtData, commitOpts *ledger.CommitOptions) error
 

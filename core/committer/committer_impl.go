@@ -26,6 +26,8 @@ type PeerLedgerSupport interface {
 
 	GetPvtDataByNum(blockNum uint64, filter ledger.PvtNsCollFilter) ([]*ledger.TxPvtData, error)
 
+	Commit(block *common.Block, pvtdataProvider ledger.BlockPvtdataProvider, commitOpts *ledger.CommitOptions) error
+
 	CommitLegacy(blockAndPvtdata *ledger.BlockAndPvtData, commitOpts *ledger.CommitOptions) error
 
 	CommitPvtDataOfOldBlocks(blockPvtData []*ledger.BlockPvtData) ([]*ledger.PvtdataHashMismatch, error)
@@ -54,6 +56,16 @@ type LedgerCommitter struct {
 // which passes incoming blocks via validation and commits them into the ledger.
 func NewLedgerCommitter(ledger PeerLedgerSupport) *LedgerCommitter {
 	return &LedgerCommitter{PeerLedgerSupport: ledger}
+}
+
+// Commit commits the block as per the new block commit flow and is expected to be called under a capability
+func (lc *LedgerCommitter) Commit(block *common.Block, pvtdataProvider ledger.BlockPvtdataProvider, commitOpts *ledger.CommitOptions) error {
+	// Committing new block
+	if err := lc.PeerLedgerSupport.Commit(block, pvtdataProvider, commitOpts); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // CommitLegacy commits blocks atomically with private data

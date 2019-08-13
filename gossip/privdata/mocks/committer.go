@@ -16,6 +16,20 @@ func (_m *Committer) Close() {
 	_m.Called()
 }
 
+// Commit provides a mock function with given fields: block, pvtdataProvider, commitOpts
+func (_m *Committer) Commit(block *common.Block, pvtdataProvider ledger.BlockPvtdataProvider, commitOpts *ledger.CommitOptions) error {
+	ret := _m.Called(block, pvtdataProvider, commitOpts)
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(*common.Block, ledger.BlockPvtdataProvider, *ledger.CommitOptions) error); ok {
+		r0 = rf(block, pvtdataProvider, commitOpts)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
 // CommitLegacy provides a mock function with given fields: blockAndPvtData, commitOpts
 func (_m *Committer) CommitLegacy(blockAndPvtData *ledger.BlockAndPvtData, commitOpts *ledger.CommitOptions) error {
 	ret := _m.Called(blockAndPvtData, commitOpts)
