@@ -40,7 +40,7 @@ jobs:
         displayName: Checkout Fabric Code
       - script: tox -edocs
         displayName: Build Documentation
-      - publish: 'docs/_build/html'
+      - publish: '/home/vsts/work/1/go/src/github.com/hyperledger/fabric/docs/_build/html'
         displayName: Publish Documentation Artifacts
 
   - job: UnitTests
