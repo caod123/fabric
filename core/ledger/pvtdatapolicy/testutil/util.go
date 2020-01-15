@@ -16,7 +16,7 @@ import (
 // The example input entry is [2]string{ns, coll}:btl
 func SampleBTLPolicy(m map[[2]string]uint64) pvtdatapolicy.BTLPolicy {
 	ccInfoRetriever := &mock.CollectionInfoProvider{}
-	ccInfoRetriever.CollectionInfoStub = func(ccName, collName string) (*peer.StaticCollectionConfig, error) {
+	ccInfoRetriever.ExplicitCollectionInfoStub = func(ccName, collName string) (*peer.StaticCollectionConfig, error) {
 		btl := m[[2]string{ccName, collName}]
 		return &peer.StaticCollectionConfig{BlockToLive: btl}, nil
 	}

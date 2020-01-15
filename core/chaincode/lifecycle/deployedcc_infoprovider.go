@@ -134,9 +134,9 @@ func (vc *ValidatorCommitter) AllCollectionsConfigPkg(channelName, chaincodeName
 	}, nil
 }
 
-// CollectionInfo implements function in interface ledger.DeployedChaincodeInfoProvider, it returns config for
-// both static and implicit collections.
-func (vc *ValidatorCommitter) CollectionInfo(channelName, chaincodeName, collectionName string, qe ledger.SimpleQueryExecutor) (*pb.StaticCollectionConfig, error) {
+// ExplicitCollectionInfo implements function in interface ledger.DeployedChaincodeInfoProvider, it returns config for
+// explicit static collections.
+func (vc *ValidatorCommitter) ExplicitCollectionInfo(channelName, chaincodeName, collectionName string, qe ledger.SimpleQueryExecutor) (*pb.StaticCollectionConfig, error) {
 	exists, definedChaincode, err := vc.Resources.ChaincodeDefinitionIfDefined(chaincodeName, &SimpleQueryExecutorShim{
 		Namespace:           LifecycleNamespace,
 		SimpleQueryExecutor: qe,
@@ -146,12 +146,7 @@ func (vc *ValidatorCommitter) CollectionInfo(channelName, chaincodeName, collect
 	}
 
 	if !exists {
-		return vc.LegacyDeployedCCInfoProvider.CollectionInfo(channelName, chaincodeName, collectionName, qe)
-	}
-
-	matches := ImplicitCollectionMatcher.FindStringSubmatch(collectionName)
-	if len(matches) == 2 {
-		return GenerateImplicitCollectionForOrg(matches[1]), nil
+		return vc.LegacyDeployedCCInfoProvider.ExplicitCollectionInfo(channelName, chaincodeName, collectionName, qe)
 	}
 
 	if definedChaincode.Collections != nil {

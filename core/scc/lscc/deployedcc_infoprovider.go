@@ -91,8 +91,8 @@ func (p *DeployedCCInfoProvider) AllCollectionsConfigPkg(channelName, chaincodeN
 	return fetchCollConfigPkg(chaincodeName, qe)
 }
 
-// CollectionInfo implements function in interface ledger.DeployedChaincodeInfoProvider
-func (p *DeployedCCInfoProvider) CollectionInfo(channelName, chaincodeName, collectionName string, qe ledger.SimpleQueryExecutor) (*peer.StaticCollectionConfig, error) {
+// ExplicitCollectionInfo implements function in interface ledger.DeployedChaincodeInfoProvider
+func (p *DeployedCCInfoProvider) ExplicitCollectionInfo(channelName, chaincodeName, collectionName string, qe ledger.SimpleQueryExecutor) (*peer.StaticCollectionConfig, error) {
 	collConfigPkg, err := fetchCollConfigPkg(chaincodeName, qe)
 	if err != nil || collConfigPkg == nil {
 		return nil, err

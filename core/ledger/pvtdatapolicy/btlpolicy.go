@@ -55,7 +55,7 @@ func (p *LSCCBasedBTLPolicy) GetBTL(namesapce string, collection string) (uint64
 	defer p.lock.Unlock()
 	btl, ok = p.cache[key]
 	if !ok {
-		collConfig, err := p.collInfoProvider.CollectionInfo(namesapce, collection)
+		collConfig, err := p.collInfoProvider.ExplicitCollectionInfo(namesapce, collection)
 		if err != nil {
 			return 0, err
 		}
@@ -87,7 +87,7 @@ func (p *LSCCBasedBTLPolicy) GetExpiringBlock(namesapce string, collection strin
 }
 
 type collectionInfoProvider interface {
-	CollectionInfo(chaincodeName, collectionName string) (*peer.StaticCollectionConfig, error)
+	ExplicitCollectionInfo(chaincodeName, collectionName string) (*peer.StaticCollectionConfig, error)
 }
 
 //go:generate counterfeiter -o mock/coll_info_provider.go -fake-name CollectionInfoProvider . collectionInfoProvider

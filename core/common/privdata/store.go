@@ -42,9 +42,8 @@ type QueryExecutorFactory interface {
 type ChaincodeInfoProvider interface {
 	// ChaincodeInfo returns the info about a deployed chaincode.
 	ChaincodeInfo(channelName, chaincodeName string, qe ledger.SimpleQueryExecutor) (*ledger.DeployedChaincodeInfo, error)
-	// CollectionInfo returns the proto msg that defines the named collection.
-	// This function can be used for both explicit and implicit collections.
-	CollectionInfo(channelName, chaincodeName, collectionName string, qe ledger.SimpleQueryExecutor) (*peer.StaticCollectionConfig, error)
+	// ExplicitCollectionInfo returns the proto msg that defines the named collection.
+	ExplicitCollectionInfo(channelName, chaincodeName, collectionName string, qe ledger.SimpleQueryExecutor) (*peer.StaticCollectionConfig, error)
 	// AllCollectionsConfigPkg returns a combined collection config pkg that contains both explicit and implicit collections
 	AllCollectionsConfigPkg(channelName, chaincodeName string, qe ledger.SimpleQueryExecutor) (*peer.CollectionConfigPackage, error)
 }
@@ -140,7 +139,7 @@ func (c *SimpleCollectionStore) retrieveCollectionConfig(cc CollectionCriteria, 
 		}
 		defer qe.Done()
 	}
-	collConfig, err := c.ccInfoProvider.CollectionInfo(cc.Channel, cc.Namespace, cc.Collection, qe)
+	collConfig, err := c.ccInfoProvider.ExplicitCollectionInfo(cc.Channel, cc.Namespace, cc.Collection, qe)
 	if err != nil {
 		return nil, err
 	}

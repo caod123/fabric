@@ -39,19 +39,19 @@ type ChaincodeInfoProvider struct {
 		result1 *ledger.DeployedChaincodeInfo
 		result2 error
 	}
-	CollectionInfoStub        func(string, string, string, ledger.SimpleQueryExecutor) (*peer.StaticCollectionConfig, error)
-	collectionInfoMutex       sync.RWMutex
-	collectionInfoArgsForCall []struct {
+	ExplicitCollectionInfoStub        func(string, string, string, ledger.SimpleQueryExecutor) (*peer.StaticCollectionConfig, error)
+	explicitCollectionInfoMutex       sync.RWMutex
+	explicitCollectionInfoArgsForCall []struct {
 		arg1 string
 		arg2 string
 		arg3 string
 		arg4 ledger.SimpleQueryExecutor
 	}
-	collectionInfoReturns struct {
+	explicitCollectionInfoReturns struct {
 		result1 *peer.StaticCollectionConfig
 		result2 error
 	}
-	collectionInfoReturnsOnCall map[int]struct {
+	explicitCollectionInfoReturnsOnCall map[int]struct {
 		result1 *peer.StaticCollectionConfig
 		result2 error
 	}
@@ -189,67 +189,67 @@ func (fake *ChaincodeInfoProvider) ChaincodeInfoReturnsOnCall(i int, result1 *le
 	}{result1, result2}
 }
 
-func (fake *ChaincodeInfoProvider) CollectionInfo(arg1 string, arg2 string, arg3 string, arg4 ledger.SimpleQueryExecutor) (*peer.StaticCollectionConfig, error) {
-	fake.collectionInfoMutex.Lock()
-	ret, specificReturn := fake.collectionInfoReturnsOnCall[len(fake.collectionInfoArgsForCall)]
-	fake.collectionInfoArgsForCall = append(fake.collectionInfoArgsForCall, struct {
+func (fake *ChaincodeInfoProvider) ExplicitCollectionInfo(arg1 string, arg2 string, arg3 string, arg4 ledger.SimpleQueryExecutor) (*peer.StaticCollectionConfig, error) {
+	fake.explicitCollectionInfoMutex.Lock()
+	ret, specificReturn := fake.explicitCollectionInfoReturnsOnCall[len(fake.explicitCollectionInfoArgsForCall)]
+	fake.explicitCollectionInfoArgsForCall = append(fake.explicitCollectionInfoArgsForCall, struct {
 		arg1 string
 		arg2 string
 		arg3 string
 		arg4 ledger.SimpleQueryExecutor
 	}{arg1, arg2, arg3, arg4})
-	fake.recordInvocation("CollectionInfo", []interface{}{arg1, arg2, arg3, arg4})
-	fake.collectionInfoMutex.Unlock()
-	if fake.CollectionInfoStub != nil {
-		return fake.CollectionInfoStub(arg1, arg2, arg3, arg4)
+	fake.recordInvocation("ExplicitCollectionInfo", []interface{}{arg1, arg2, arg3, arg4})
+	fake.explicitCollectionInfoMutex.Unlock()
+	if fake.ExplicitCollectionInfoStub != nil {
+		return fake.ExplicitCollectionInfoStub(arg1, arg2, arg3, arg4)
 	}
 	if specificReturn {
 		return ret.result1, ret.result2
 	}
-	fakeReturns := fake.collectionInfoReturns
+	fakeReturns := fake.explicitCollectionInfoReturns
 	return fakeReturns.result1, fakeReturns.result2
 }
 
-func (fake *ChaincodeInfoProvider) CollectionInfoCallCount() int {
-	fake.collectionInfoMutex.RLock()
-	defer fake.collectionInfoMutex.RUnlock()
-	return len(fake.collectionInfoArgsForCall)
+func (fake *ChaincodeInfoProvider) ExplicitCollectionInfoCallCount() int {
+	fake.explicitCollectionInfoMutex.RLock()
+	defer fake.explicitCollectionInfoMutex.RUnlock()
+	return len(fake.explicitCollectionInfoArgsForCall)
 }
 
-func (fake *ChaincodeInfoProvider) CollectionInfoCalls(stub func(string, string, string, ledger.SimpleQueryExecutor) (*peer.StaticCollectionConfig, error)) {
-	fake.collectionInfoMutex.Lock()
-	defer fake.collectionInfoMutex.Unlock()
-	fake.CollectionInfoStub = stub
+func (fake *ChaincodeInfoProvider) ExplicitCollectionInfoCalls(stub func(string, string, string, ledger.SimpleQueryExecutor) (*peer.StaticCollectionConfig, error)) {
+	fake.explicitCollectionInfoMutex.Lock()
+	defer fake.explicitCollectionInfoMutex.Unlock()
+	fake.ExplicitCollectionInfoStub = stub
 }
 
-func (fake *ChaincodeInfoProvider) CollectionInfoArgsForCall(i int) (string, string, string, ledger.SimpleQueryExecutor) {
-	fake.collectionInfoMutex.RLock()
-	defer fake.collectionInfoMutex.RUnlock()
-	argsForCall := fake.collectionInfoArgsForCall[i]
+func (fake *ChaincodeInfoProvider) ExplicitCollectionInfoArgsForCall(i int) (string, string, string, ledger.SimpleQueryExecutor) {
+	fake.explicitCollectionInfoMutex.RLock()
+	defer fake.explicitCollectionInfoMutex.RUnlock()
+	argsForCall := fake.explicitCollectionInfoArgsForCall[i]
 	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3, argsForCall.arg4
 }
 
-func (fake *ChaincodeInfoProvider) CollectionInfoReturns(result1 *peer.StaticCollectionConfig, result2 error) {
-	fake.collectionInfoMutex.Lock()
-	defer fake.collectionInfoMutex.Unlock()
-	fake.CollectionInfoStub = nil
-	fake.collectionInfoReturns = struct {
+func (fake *ChaincodeInfoProvider) ExplicitCollectionInfoReturns(result1 *peer.StaticCollectionConfig, result2 error) {
+	fake.explicitCollectionInfoMutex.Lock()
+	defer fake.explicitCollectionInfoMutex.Unlock()
+	fake.ExplicitCollectionInfoStub = nil
+	fake.explicitCollectionInfoReturns = struct {
 		result1 *peer.StaticCollectionConfig
 		result2 error
 	}{result1, result2}
 }
 
-func (fake *ChaincodeInfoProvider) CollectionInfoReturnsOnCall(i int, result1 *peer.StaticCollectionConfig, result2 error) {
-	fake.collectionInfoMutex.Lock()
-	defer fake.collectionInfoMutex.Unlock()
-	fake.CollectionInfoStub = nil
-	if fake.collectionInfoReturnsOnCall == nil {
-		fake.collectionInfoReturnsOnCall = make(map[int]struct {
+func (fake *ChaincodeInfoProvider) ExplicitCollectionInfoReturnsOnCall(i int, result1 *peer.StaticCollectionConfig, result2 error) {
+	fake.explicitCollectionInfoMutex.Lock()
+	defer fake.explicitCollectionInfoMutex.Unlock()
+	fake.ExplicitCollectionInfoStub = nil
+	if fake.explicitCollectionInfoReturnsOnCall == nil {
+		fake.explicitCollectionInfoReturnsOnCall = make(map[int]struct {
 			result1 *peer.StaticCollectionConfig
 			result2 error
 		})
 	}
-	fake.collectionInfoReturnsOnCall[i] = struct {
+	fake.explicitCollectionInfoReturnsOnCall[i] = struct {
 		result1 *peer.StaticCollectionConfig
 		result2 error
 	}{result1, result2}
@@ -262,8 +262,8 @@ func (fake *ChaincodeInfoProvider) Invocations() map[string][][]interface{} {
 	defer fake.allCollectionsConfigPkgMutex.RUnlock()
 	fake.chaincodeInfoMutex.RLock()
 	defer fake.chaincodeInfoMutex.RUnlock()
-	fake.collectionInfoMutex.RLock()
-	defer fake.collectionInfoMutex.RUnlock()
+	fake.explicitCollectionInfoMutex.RLock()
+	defer fake.explicitCollectionInfoMutex.RUnlock()
 	copiedInvocations := map[string][][]interface{}{}
 	for key, value := range fake.invocations {
 		copiedInvocations[key] = value

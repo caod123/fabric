@@ -651,13 +651,13 @@ type collectionInfoRetriever struct {
 	infoProvider ledger.DeployedChaincodeInfoProvider
 }
 
-func (r *collectionInfoRetriever) CollectionInfo(chaincodeName, collectionName string) (*peer.StaticCollectionConfig, error) {
+func (r *collectionInfoRetriever) ExplicitCollectionInfo(chaincodeName, collectionName string) (*peer.StaticCollectionConfig, error) {
 	qe, err := r.ledger.NewQueryExecutor()
 	if err != nil {
 		return nil, err
 	}
 	defer qe.Done()
-	return r.infoProvider.CollectionInfo(r.ledgerID, chaincodeName, collectionName, qe)
+	return r.infoProvider.ExplicitCollectionInfo(r.ledgerID, chaincodeName, collectionName, qe)
 }
 
 type ccEventListenerAdaptor struct {

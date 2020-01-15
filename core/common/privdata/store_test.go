@@ -65,12 +65,12 @@ func TestCollectionStore(t *testing.T) {
 	assert.Contains(t, err.Error(), "could not be found")
 
 	ccr := CollectionCriteria{Channel: "ch", Namespace: "cc", Collection: "mycollection"}
-	mockCCInfoProvider.CollectionInfoReturns(nil, errors.New("collection-info-error"))
+	mockCCInfoProvider.ExplicitCollectionInfoReturns(nil, errors.New("collection-info-error"))
 	_, err = cs.RetrieveCollection(ccr)
 	assert.EqualError(t, err, "collection-info-error")
 
 	scc := &peer.StaticCollectionConfig{Name: "mycollection"}
-	mockCCInfoProvider.CollectionInfoReturns(scc, nil)
+	mockCCInfoProvider.ExplicitCollectionInfoReturns(scc, nil)
 	_, err = cs.RetrieveCollection(ccr)
 	assert.Contains(t, err.Error(), "error setting up collection for collection criteria")
 
@@ -85,7 +85,7 @@ func TestCollectionStore(t *testing.T) {
 		MemberOnlyWrite:  false,
 	}
 
-	mockCCInfoProvider.CollectionInfoReturns(scc, nil)
+	mockCCInfoProvider.ExplicitCollectionInfoReturns(scc, nil)
 	c, err := cs.RetrieveCollection(ccr)
 	assert.NoError(t, err)
 	assert.NotNil(t, c)
@@ -105,7 +105,7 @@ func TestCollectionStore(t *testing.T) {
 	}
 	ccp := &peer.CollectionConfigPackage{Config: []*peer.CollectionConfig{cc}}
 
-	mockCCInfoProvider.CollectionInfoReturns(scc, nil)
+	mockCCInfoProvider.ExplicitCollectionInfoReturns(scc, nil)
 	mockCCInfoProvider.ChaincodeInfoReturns(
 		&ledger.DeployedChaincodeInfo{ExplicitCollectionConfigPkg: ccp},
 		nil,
@@ -135,7 +135,7 @@ func TestCollectionStore(t *testing.T) {
 		MemberOnlyRead:   false,
 		MemberOnlyWrite:  false,
 	}
-	mockCCInfoProvider.CollectionInfoReturns(scc, nil)
+	mockCCInfoProvider.ExplicitCollectionInfoReturns(scc, nil)
 
 	// only signer0 and signer1 are the members
 	signedProp, _ = protoutil.MockSignedEndorserProposalOrPanic("A", &peer.ChaincodeSpec{}, []byte("signer2"), []byte("msg1"))

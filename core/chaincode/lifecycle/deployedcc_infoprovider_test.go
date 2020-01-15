@@ -225,9 +225,9 @@ var _ = Describe("ValidatorCommitter", func() {
 		})
 	})
 
-	Describe("CollectionInfo", func() {
+	Describe("ExplicitCollectionInfo", func() {
 		It("returns the collection info as defined in the new lifecycle", func() {
-			res, err := vc.CollectionInfo("channel-name", "cc-name", "collection-name", fakeQueryExecutor)
+			res, err := vc.ExplicitCollectionInfo("channel-name", "cc-name", "collection-name", fakeQueryExecutor)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(proto.Equal(res, &pb.StaticCollectionConfig{
 				Name: "collection-name",
@@ -236,7 +236,7 @@ var _ = Describe("ValidatorCommitter", func() {
 
 		Context("when no matching collection is found", func() {
 			It("returns nil", func() {
-				res, err := vc.CollectionInfo("channel-name", "cc-name", "non-extant-name", fakeQueryExecutor)
+				res, err := vc.ExplicitCollectionInfo("channel-name", "cc-name", "non-extant-name", fakeQueryExecutor)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(res).To(BeNil())
 			})
@@ -244,7 +244,7 @@ var _ = Describe("ValidatorCommitter", func() {
 
 		Context("when the chaincode in question is _lifecycle", func() {
 			It("skips the existence checks and checks the implicit collections", func() {
-				res, err := vc.CollectionInfo("channel-name", "_lifecycle", "_implicit_org_first-mspid", fakeQueryExecutor)
+				res, err := vc.ExplicitCollectionInfo("channel-name", "_lifecycle", "_implicit_org_first-mspid", fakeQueryExecutor)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(res).NotTo(BeNil())
 			})
@@ -256,7 +256,7 @@ var _ = Describe("ValidatorCommitter", func() {
 			})
 
 			It("wraps and returns the error", func() {
-				_, err := vc.CollectionInfo("channel-name", "cc-name", "collection-name", fakeQueryExecutor)
+				_, err := vc.ExplicitCollectionInfo("channel-name", "cc-name", "collection-name", fakeQueryExecutor)
 				Expect(err).To(MatchError("could not get chaincode: could not deserialize metadata for chaincode cc-name: could not query metadata for namespace namespaces/cc-name: state-error"))
 			})
 		})
@@ -268,15 +268,15 @@ var _ = Describe("ValidatorCommitter", func() {
 
 			BeforeEach(func() {
 				collInfo = &pb.StaticCollectionConfig{}
-				fakeLegacyProvider.CollectionInfoReturns(collInfo, fmt.Errorf("collection-info-error"))
+				fakeLegacyProvider.ExplicitCollectionInfoReturns(collInfo, fmt.Errorf("collection-info-error"))
 			})
 
 			It("passes through to the legacy impl", func() {
-				res, err := vc.CollectionInfo("channel-name", "legacy-name", "collection-name", fakeQueryExecutor)
+				res, err := vc.ExplicitCollectionInfo("channel-name", "legacy-name", "collection-name", fakeQueryExecutor)
 				Expect(res).To(Equal(collInfo))
 				Expect(err).To(MatchError("collection-info-error"))
-				Expect(fakeLegacyProvider.CollectionInfoCallCount()).To(Equal(1))
-				channelID, ccName, collName, qe := fakeLegacyProvider.CollectionInfoArgsForCall(0)
+				Expect(fakeLegacyProvider.ExplicitCollectionInfoCallCount()).To(Equal(1))
+				channelID, ccName, collName, qe := fakeLegacyProvider.ExplicitCollectionInfoArgsForCall(0)
 				Expect(channelID).To(Equal("channel-name"))
 				Expect(ccName).To(Equal("legacy-name"))
 				Expect(collName).To(Equal("collection-name"))
@@ -290,7 +290,7 @@ var _ = Describe("ValidatorCommitter", func() {
 			})
 
 			It("wraps and returns that error", func() {
-				_, err := vc.CollectionInfo("channel-name", "cc-name", "collection-name", fakeQueryExecutor)
+				_, err := vc.ExplicitCollectionInfo("channel-name", "cc-name", "collection-name", fakeQueryExecutor)
 				Expect(err).To(MatchError("could not get chaincode: could not deserialize chaincode definition for chaincode cc-name: could not unmarshal state for key namespaces/fields/cc-name/ValidationInfo: proto: can't skip unknown wire type 7"))
 			})
 		})

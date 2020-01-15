@@ -56,7 +56,7 @@ func TestExpiringBlock(t *testing.T) {
 
 func testutilSampleBTLPolicy() BTLPolicy {
 	ccInfoRetriever := &mock.CollectionInfoProvider{}
-	ccInfoRetriever.CollectionInfoStub = func(ccName, collName string) (*peer.StaticCollectionConfig, error) {
+	ccInfoRetriever.ExplicitCollectionInfoStub = func(ccName, collName string) (*peer.StaticCollectionConfig, error) {
 		collConfig := &peer.StaticCollectionConfig{}
 		var err error
 		switch collName {
