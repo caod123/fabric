@@ -12,10 +12,13 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
+	"github.com/gogo/protobuf/proto"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 
@@ -23,7 +26,10 @@ import (
 	"github.com/hyperledger/fabric/core/ledger/util"
 	"github.com/hyperledger/fabric/integration/nwo"
 	"github.com/hyperledger/fabric/integration/nwo/commands"
+	"github.com/hyperledger/fabric/msp"
 	"github.com/hyperledger/fabric/protos/common"
+	mspp "github.com/hyperledger/fabric/protos/msp"
+	"github.com/hyperledger/fabric/protos/utils"
 	"github.com/onsi/gomega/gbytes"
 	"github.com/onsi/gomega/gexec"
 	"github.com/tedsuo/ifrit"
@@ -199,19 +205,68 @@ var _ bool = Describe("PrivateData", func() {
 				`{"docType":"marble","name":"marble1","color":"blue","size":35,"owner":"tom"}`)
 		})
 
-		It("verify private data is pulled when joining a new peer in an org that belongs to collection config", func() {
-			By("verify access of initial setup")
-			verifyAccessInitialSetup(network)
+		FIt("verify private data is pulled when joining a new peer in an org that belongs to collection config", func() {
+			By("XXX - fetching the channel policy")
+			currentConfig := nwo.GetConfig(network, network.Peer("org3", "peer0"), orderer, "testchannel")
+			updatedConfig := proto.Clone(currentConfig).(*common.Config)
+
+			By("XXX - generating new certs")
+			tempCryptoDir, err := ioutil.TempDir("", "crypto")
+			Expect(err).NotTo(HaveOccurred())
+			defer os.RemoveAll(tempCryptoDir)
+			sess, err := network.Cryptogen(commands.Generate{
+				Config: network.CryptoConfigPath(),
+				Output: tempCryptoDir,
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Eventually(sess, network.EventuallyTimeout).Should(gexec.Exit(0))
+
+			By("XXX - copying the new certs for org2.peer1 to the original crypto dir")
+			org2peer1 := network.Peer("org2", "peer1")
+			oldLocalMSPPath := network.PeerLocalMSPDir(org2peer1)
+			tempLocalMSPPath := filepath.Join(tempCryptoDir, "peerOrganizations", "org2.example.com", "peers", "peer1.org2.example.com", "msp")
+			os.RemoveAll(oldLocalMSPPath)
+			err = exec.Command("cp", "-r", tempLocalMSPPath, oldLocalMSPPath).Run()
+			Expect(err).NotTo(HaveOccurred())
+
+			By("XXX - parsing the two MSP configs")
+			oldConfig := &mspp.MSPConfig{}
+			err = proto.Unmarshal(updatedConfig.ChannelGroup.Groups["Application"].Groups["org2"].Values["MSP"].Value, oldConfig)
+			Expect(err).NotTo(HaveOccurred())
+			org2 := network.Organization(org2peer1.Organization)
+			newConfig, err := msp.GetVerifyingMspConfig(network.PeerOrgMSPDir(org2), "Org2MSP", "bccsp")
+			Expect(err).NotTo(HaveOccurred())
+			oldMspConfig := &mspp.FabricMSPConfig{}
+			newMspConfig := &mspp.FabricMSPConfig{}
+			err = proto.Unmarshal(oldConfig.Config, oldMspConfig)
+			Expect(err).NotTo(HaveOccurred())
+			err = proto.Unmarshal(newConfig.Config, newMspConfig)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("XXX - merging the two MSP configs")
+			oldMspConfig.RootCerts = append(oldMspConfig.RootCerts, newMspConfig.RootCerts...)
+			oldMspConfig.TlsRootCerts = append(oldMspConfig.TlsRootCerts, newMspConfig.TlsRootCerts...)
+			oldMspConfig.FabricNodeOus.PeerOuIdentifier.Certificate = nil
+			oldMspConfig.FabricNodeOus.ClientOuIdentifier.Certificate = nil
+			oldMspConfig.FabricNodeOus.AdminOuIdentifier.Certificate = nil
+
+			By("XXX - updating the channel config")
+			updatedConfig.ChannelGroup.Groups["Application"].Groups["org2"].Values["MSP"].Value = utils.MarshalOrPanic(&mspp.MSPConfig{
+				Type:   oldConfig.Type,
+				Config: utils.MarshalOrPanic(oldMspConfig),
+			})
+			nwo.UpdateConfig(network, orderer, "testchannel", currentConfig, updatedConfig, true, network.Peer("org2", "peer0"))
 
 			By("peer1.org2 joins the channel")
-			org2peer1 := network.Peer("org2", "peer1")
+			// Call network.Peer again for the new identity
+			org2peer1 = network.Peer("org2", "peer1")
 			network.JoinChannel("testchannel", orderer, org2peer1)
 			org2peer1.Channels = append(org2peer1.Channels, &nwo.PeerChannel{Name: "testchannel", Anchor: false})
 
 			ledgerHeight := getLedgerHeight(network, network.Peer("org1", "peer0"), "testchannel")
 
 			By("fetch latest blocks to peer1.org2")
-			sess, err := network.PeerAdminSession(org2peer1, commands.ChannelFetch{
+			sess, err = network.PeerAdminSession(org2peer1, commands.ChannelFetch{
 				Block:      "newest",
 				ChannelID:  "testchannel",
 				Orderer:    network.OrdererAddress(orderer, nwo.ListenPort),
@@ -237,6 +292,9 @@ var _ bool = Describe("PrivateData", func() {
 				network.Peer("org2", "peer0"),
 				network.Peer("org2", "peer1"),
 				network.Peer("org3", "peer0")}
+
+			By("waiting for dissemination")
+			time.Sleep(10 * time.Second)
 
 			By("verifying membership")
 			verifyMembership(network, expectedPeers, "testchannel", "marblesp")
@@ -735,7 +793,6 @@ func startNetwork(n *nwo.Network) (ifrit.Process, *nwo.Orderer, []*nwo.Peer) {
 	verifyMembership(n, expectedPeers, "testchannel")
 
 	return process, orderer, expectedPeers
-
 }
 
 func verifyAccessInitialSetup(network *nwo.Network) {
