@@ -461,6 +461,7 @@ func ConfigTemplateFromGroup(conf *genesisconfig.Profile, cg *cb.ConfigGroup) (*
 
 	for _, organization := range conf.Application.Organizations {
 		var ok bool
+
 		template.Groups[channelconfig.ApplicationGroupKey].Groups[organization.Name], ok = consortium.Groups[organization.Name]
 		if !ok {
 			return nil, errors.Errorf("consortium %s does not contain member org %s", conf.Consortium, organization.Name)
@@ -484,6 +485,7 @@ func MakeChannelCreationTransaction(
 	if err != nil {
 		return nil, errors.WithMessage(err, "could not generate default config template")
 	}
+
 	return MakeChannelCreationTransactionFromTemplate(channelID, signer, conf, template)
 }
 
