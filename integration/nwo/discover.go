@@ -8,6 +8,7 @@ package nwo
 
 import (
 	"encoding/json"
+	"time"
 
 	"github.com/hyperledger/fabric/integration/nwo/commands"
 	. "github.com/onsi/gomega"
@@ -36,7 +37,7 @@ func DiscoverPeers(n *Network, p *Peer, user, channelName string) func() []Disco
 		}
 		sess, err := n.Discover(peers)
 		Expect(err).NotTo(HaveOccurred())
-		Eventually(sess).Should(gexec.Exit(0))
+		Eventually(sess, 5*time.Second).Should(gexec.Exit(0))
 
 		var discovered []DiscoveredPeer
 		err = json.Unmarshal(sess.Out.Contents(), &discovered)

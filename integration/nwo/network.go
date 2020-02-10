@@ -492,6 +492,17 @@ func (n *Network) PeerCert(p *Peer) string {
 	)
 }
 
+// PeerOrgCADir returns the path to the local CA directory for the Peer organization.
+func (n *Network) PeerOrgCADir(org *Organization) string {
+	return filepath.Join(
+		n.RootDir,
+		"crypto",
+		"peerOrganizations",
+		org.Domain,
+		"ca",
+	)
+}
+
 // PeerOrgMSPDir returns the path to the MSP directory of the Peer organization.
 func (n *Network) PeerOrgMSPDir(org *Organization) string {
 	return filepath.Join(
@@ -1026,7 +1037,7 @@ func (n *Network) OrdererGroupRunner() ifrit.Runner {
 // PeerRunner returns an ifrit.Runner for the specified peer. The runner can be
 // used to start and manage a peer process.
 func (n *Network) PeerRunner(p *Peer) *ginkgomon.Runner {
-	cmd := n.peerCommand(
+	cmd := n.PeerCommand(
 		commands.NodeStart{PeerID: p.ID()},
 		fmt.Sprintf("FABRIC_CFG_PATH=%s", n.PeerDir(p)),
 	)
@@ -1061,7 +1072,7 @@ func (n *Network) NetworkGroupRunner() ifrit.Runner {
 	return grouper.NewOrdered(syscall.SIGTERM, members)
 }
 
-func (n *Network) peerCommand(command Command, env ...string) *exec.Cmd {
+func (n *Network) PeerCommand(command Command, env ...string) *exec.Cmd {
 	cmd := NewCommand(n.Components.Peer(), command)
 	cmd.Env = append(cmd.Env, env...)
 	if ConnectsToOrderer(command) {
@@ -1103,7 +1114,7 @@ func (n *Network) PeerAdminSession(p *Peer, command Command) (*gexec.Session, er
 // command. This is intended to be used by short running peer cli commands that
 // execute in the context of a peer configuration.
 func (n *Network) PeerUserSession(p *Peer, user string, command Command) (*gexec.Session, error) {
-	cmd := n.peerCommand(
+	cmd := n.PeerCommand(
 		command,
 		fmt.Sprintf("FABRIC_CFG_PATH=%s", n.PeerDir(p)),
 		fmt.Sprintf("CORE_PEER_MSPCONFIGPATH=%s", n.PeerUserMSPDir(p, user)),
@@ -1114,9 +1125,9 @@ func (n *Network) PeerUserSession(p *Peer, user string, command Command) (*gexec
 // OrdererAdminSession execute a gexec.Session as an orderer node admin user. This is used primarily
 // to generate orderer configuration updates
 func (n *Network) OrdererAdminSession(o *Orderer, p *Peer, command Command) (*gexec.Session, error) {
-	cmd := n.peerCommand(
+	cmd := n.PeerCommand(
 		command,
-		"CORE_PEER_LOCALMSPID=OrdererMSP",
+		"CORE_PEER_LOCALMSPID=OrdererOrgMSP",
 		fmt.Sprintf("FABRIC_CFG_PATH=%s", n.PeerDir(p)),
 		fmt.Sprintf("CORE_PEER_MSPCONFIGPATH=%s", n.OrdererUserMSPDir(o, "Admin")),
 	)

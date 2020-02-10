@@ -105,6 +105,7 @@ var _ bool = Describe("PrivateData", func() {
 			process       ifrit.Process
 			orderer       *nwo.Orderer
 			expectedPeers []*nwo.Peer
+			peerProcesses map[string]ifrit.Process
 		)
 
 		BeforeEach(func() {
@@ -112,7 +113,43 @@ var _ bool = Describe("PrivateData", func() {
 		})
 
 		JustBeforeEach(func() {
-			process, orderer, expectedPeers = startNetwork(network)
+			By("starting the network")
+			peerProcesses = make(map[string]ifrit.Process)
+			network.Bootstrap()
+
+			members := grouper.Members{
+				{Name: "brokers", Runner: network.BrokerGroupRunner()},
+				{Name: "orderers", Runner: network.OrdererGroupRunner()},
+			}
+			networkRunner := grouper.NewOrdered(syscall.SIGTERM, members)
+			process = ifrit.Invoke(networkRunner)
+			Eventually(process.Ready()).Should(BeClosed())
+
+			org1peer0 := network.Peer("org1", "peer0")
+			org2peer0 := network.Peer("org2", "peer0")
+			org3peer0 := network.Peer("org3", "peer0")
+
+			testPeers := []*nwo.Peer{org1peer0, org2peer0, org3peer0}
+			for _, peer := range testPeers {
+				pr := network.PeerRunner(peer)
+				p := ifrit.Invoke(pr)
+				peerProcesses[peer.ID()] = p
+				Eventually(p.Ready(), network.EventuallyTimeout).Should(BeClosed())
+			}
+
+			orderer = network.Orderer("orderer")
+			network.CreateAndJoinChannel(orderer, "testchannel")
+			network.UpdateChannelAnchors(orderer, "testchannel")
+
+			expectedPeers = []*nwo.Peer{
+				org1peer0,
+				org2peer0,
+				org3peer0,
+			}
+
+			By("verifying membership")
+			verifyMembership(network, expectedPeers, "testchannel")
+
 			By("installing and instantiating chaincode on all peers")
 			chaincode := nwo.Chaincode{
 				Name:              "marblesp",
@@ -131,6 +168,12 @@ var _ bool = Describe("PrivateData", func() {
 		})
 
 		AfterEach(func() {
+			for _, peerProcess := range peerProcesses {
+				if peerProcess != nil {
+					peerProcess.Signal(syscall.SIGTERM)
+					Eventually(peerProcess.Wait(), network.EventuallyTimeout).Should(Receive())
+				}
+			}
 			testCleanup(testDir, network, process)
 		})
 
@@ -205,9 +248,10 @@ var _ bool = Describe("PrivateData", func() {
 				`{"docType":"marble","name":"marble1","color":"blue","size":35,"owner":"tom"}`)
 		})
 
+		// This test has been extended to also verify private data is pulled if the peer has had its ca cert rolled
 		FIt("verify private data is pulled when joining a new peer in an org that belongs to collection config", func() {
 			By("XXX - fetching the channel policy")
-			currentConfig := nwo.GetConfig(network, network.Peer("org3", "peer0"), orderer, "testchannel")
+			currentConfig := nwo.GetConfig(network, network.Peer("org1", "peer0"), orderer, "testchannel")
 			updatedConfig := proto.Clone(currentConfig).(*common.Config)
 
 			By("XXX - generating new certs")
@@ -221,20 +265,62 @@ var _ bool = Describe("PrivateData", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Eventually(sess, network.EventuallyTimeout).Should(gexec.Exit(0))
 
-			By("XXX - copying the new certs for org2.peer1 to the original crypto dir")
+			By("XXX - copying the new msp certs for org2.peer1 to the original crypto dir")
 			org2peer1 := network.Peer("org2", "peer1")
-			oldLocalMSPPath := network.PeerLocalMSPDir(org2peer1)
-			tempLocalMSPPath := filepath.Join(tempCryptoDir, "peerOrganizations", "org2.example.com", "peers", "peer1.org2.example.com", "msp")
-			os.RemoveAll(oldLocalMSPPath)
-			err = exec.Command("cp", "-r", tempLocalMSPPath, oldLocalMSPPath).Run()
+			oldPeerMSPPath := filepath.Join(network.RootDir, "crypto", "peerOrganizations", "org2.example.com", "peers", "peer1.org2.example.com", "msp")
+			tempPeerMSPPath := filepath.Join(tempCryptoDir, "peerOrganizations", "org2.example.com", "peers", "peer1.org2.example.com", "msp")
+			os.RemoveAll(oldPeerMSPPath)
+			err = exec.Command("cp", "-r", tempPeerMSPPath, oldPeerMSPPath).Run()
 			Expect(err).NotTo(HaveOccurred())
+
+			By("XXX - copying the new Admin@org2.example.com user certs to the original user certs dir as Admin2@org2.example.com")
+			oldAdminUserPath := filepath.Join(network.RootDir, "crypto", "peerOrganizations", "org2.example.com", "users", "Admin2@org2.example.com")
+			tempAdminUserPath := filepath.Join(tempCryptoDir, "peerOrganizations", "org2.example.com", "users", "Admin@org2.example.com")
+			os.RemoveAll(oldAdminUserPath)
+			err = exec.Command("cp", "-r", tempAdminUserPath, oldAdminUserPath).Run()
+			Expect(err).NotTo(HaveOccurred())
+			err = os.Rename(
+				filepath.Join(oldAdminUserPath, "msp", "signcerts", "Admin@org2.example.com-cert.pem"),
+				filepath.Join(oldAdminUserPath, "msp", "signcerts", "Admin2@org2.example.com-cert.pem"),
+			)
+			Expect(err).NotTo(HaveOccurred())
+
+			// By("XXX - copying the new User1@org2.example.com user certs to the original user certs dir as User3@org2.example.com")
+			// oldUserPath := filepath.Join(network.RootDir, "crypto", "peerOrganizations", "org2.example.com", "users", "User3@org2.example.com")
+			// tempUserPath := filepath.Join(tempCryptoDir, "peerOrganizations", "org2.example.com", "users", "User1@org2.example.com")
+			// os.RemoveAll(oldUserPath)
+			// err = exec.Command("cp", "-r", tempUserPath, oldUserPath).Run()
+			// Expect(err).NotTo(HaveOccurred())
+			// err = os.Rename(
+			// 	filepath.Join(oldUserPath, "msp", "signcerts", "User1@org2.example.com-cert.pem"),
+			// 	filepath.Join(oldUserPath, "msp", "signcerts", "User3@org2.example.com-cert.pem"),
+			// )
+			// Expect(err).NotTo(HaveOccurred())
+
+			// By("XXX - appending the new org ca cert to the original")
+			// newCACert, err := os.Open(filepath.Join(tempCryptoDir, "peerOrganizations", "org2.example.com", "ca", "ca.org2.example.com-cert.pem"))
+			// Expect(err).NotTo(HaveOccurred())
+			//
+			// // append new org2 ca to crypto/peerOrganizations/org2.example.com/ca/ca.org2.example.com-cert.pem
+			// org2 := network.Organization(org2peer1.Organization)
+			// originalOrgCACert, err := os.OpenFile(filepath.Join(network.PeerOrgCADir(org2), "ca.org2.example.com-cert.pem"), os.O_APPEND|os.O_WRONLY, 0600)
+			// Expect(err).NotTo(HaveOccurred())
+			// _, err = io.Copy(originalOrgCACert, newCACert)
+			// Expect(err).NotTo(HaveOccurred())
+			//
+			// // append new org2 ca to crypto/peerOrganizations/org2.example.com/msp/cacerts/ca.org2.example.com-cert.pem
+			// originalOrgMSPCACert, err := os.OpenFile(filepath.Join(network.PeerOrgMSPDir(org2), "cacerts", "ca.org2.example.com-cert.pem"), os.O_APPEND|os.O_WRONLY, 0600)
+			// Expect(err).NotTo(HaveOccurred())
+			// _, err = io.Copy(originalOrgMSPCACert, newCACert)
+			// Expect(err).NotTo(HaveOccurred())
 
 			By("XXX - parsing the two MSP configs")
 			oldConfig := &mspp.MSPConfig{}
 			err = proto.Unmarshal(updatedConfig.ChannelGroup.Groups["Application"].Groups["org2"].Values["MSP"].Value, oldConfig)
 			Expect(err).NotTo(HaveOccurred())
-			org2 := network.Organization(org2peer1.Organization)
-			newConfig, err := msp.GetVerifyingMspConfig(network.PeerOrgMSPDir(org2), "Org2MSP", "bccsp")
+
+			tempOrg2Path := filepath.Join(tempCryptoDir, "peerOrganizations", "org2.example.com", "msp")
+			newConfig, err := msp.GetVerifyingMspConfig(tempOrg2Path, "Org2MSP", "bccsp")
 			Expect(err).NotTo(HaveOccurred())
 			oldMspConfig := &mspp.FabricMSPConfig{}
 			newMspConfig := &mspp.FabricMSPConfig{}
@@ -257,21 +343,44 @@ var _ bool = Describe("PrivateData", func() {
 			})
 			nwo.UpdateConfig(network, orderer, "testchannel", currentConfig, updatedConfig, true, network.Peer("org2", "peer0"))
 
-			By("peer1.org2 joins the channel")
-			// Call network.Peer again for the new identity
-			org2peer1 = network.Peer("org2", "peer1")
-			network.JoinChannel("testchannel", orderer, org2peer1)
+			By("XXX - start org2.peer1 process")
+			pr := network.PeerRunner(org2peer1)
+			p := ifrit.Invoke(pr)
+			peerProcesses[org2peer1.ID()] = p
+			Eventually(p.Ready(), network.EventuallyTimeout).Should(BeClosed())
+
+			By("XXX - peer1.org2 joins the channel with its Admin2 user")
+			tempFile, err := ioutil.TempFile("", "genesis-block")
+			Expect(err).NotTo(HaveOccurred())
+			tempFile.Close()
+			defer os.Remove(tempFile.Name())
+
+			sess, err = network.PeerUserSession(org2peer1, "Admin2", commands.ChannelFetch{
+				Block:      "0",
+				ChannelID:  "testchannel",
+				Orderer:    network.OrdererAddress(orderer, nwo.ListenPort),
+				OutputFile: tempFile.Name(),
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Eventually(sess, network.EventuallyTimeout).Should(gexec.Exit(0))
+
+			sess, err = network.PeerUserSession(org2peer1, "Admin2", commands.ChannelJoin{
+				BlockPath: tempFile.Name(),
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Eventually(sess, network.EventuallyTimeout).Should(gexec.Exit(0))
+
 			org2peer1.Channels = append(org2peer1.Channels, &nwo.PeerChannel{Name: "testchannel", Anchor: false})
 
 			ledgerHeight := getLedgerHeight(network, network.Peer("org1", "peer0"), "testchannel")
 
 			By("fetch latest blocks to peer1.org2")
-			sess, err = network.PeerAdminSession(org2peer1, commands.ChannelFetch{
-				Block:      "newest",
-				ChannelID:  "testchannel",
-				Orderer:    network.OrdererAddress(orderer, nwo.ListenPort),
-				OutputFile: filepath.Join(testDir, "newest_block.pb")})
-
+			sess, err = network.PeerUserSession(org2peer1, "Admin2", commands.ChannelFetch{
+				SpecifiedBlockNum: "newest",
+				ChannelID:         "testchannel",
+				Orderer:           network.OrdererAddress(orderer, nwo.ListenPort),
+				OutputFile:        filepath.Join(testDir, "newest_block.pb"),
+			})
 			Expect(err).NotTo(HaveOccurred())
 			Eventually(sess, network.EventuallyTimeout).Should(gexec.Exit(0))
 			Expect(sess.Err).To(gbytes.Say(fmt.Sprintf("Received block: %d", ledgerHeight-1)))
@@ -285,41 +394,92 @@ var _ bool = Describe("PrivateData", func() {
 				Policy:            `OR ('Org1MSP.member','Org2MSP.member', 'Org3MSP.member')`,
 				CollectionsConfig: filepath.Join("testdata", "collection_configs", "collections_config1.json")}
 
-			nwo.InstallChaincode(network, chaincode, org2peer1)
+			sess, err = network.PeerUserSession(org2peer1, "Admin2", commands.ChaincodeInstall{
+				Name:        chaincode.Name,
+				Version:     chaincode.Version,
+				Path:        chaincode.Path,
+				Lang:        chaincode.Lang,
+				PackageFile: chaincode.PackageFile,
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Eventually(sess, network.EventuallyTimeout).Should(gexec.Exit(0))
+
+			sess, err = network.PeerUserSession(org2peer1, "Admin2", commands.ChaincodeListInstalled{})
+			Expect(err).NotTo(HaveOccurred())
+			Eventually(sess, network.EventuallyTimeout).Should(gexec.Exit(0))
+			Expect(sess).To(gbytes.Say(fmt.Sprintf("Name: %s, Version: %s,", chaincode.Name, chaincode.Version)))
 
 			expectedPeers = []*nwo.Peer{
 				network.Peer("org1", "peer0"),
 				network.Peer("org2", "peer0"),
 				network.Peer("org2", "peer1"),
-				network.Peer("org3", "peer0")}
+				network.Peer("org3", "peer0"),
+			}
 
-			By("waiting for dissemination")
+			By("waiting for config update to commit on org1.peer2")
 			time.Sleep(10 * time.Second)
 
-			By("verifying membership")
-			verifyMembership(network, expectedPeers, "testchannel", "marblesp")
+			By("making sure all peers have the same ledger height")
+			for _, peer := range expectedPeers {
+				Eventually(func() int {
+					var (
+						sess *gexec.Session
+						err  error
+					)
+					if peer.ID() == "org2.peer1" {
+						sess, err = network.PeerUserSession(peer, "Admin2", commands.ChannelInfo{
+							ChannelID: "testchannel",
+						})
+						Expect(err).NotTo(HaveOccurred())
+						Eventually(sess, network.EventuallyTimeout).Should(gexec.Exit(0))
+					} else {
+						sess, err = network.PeerUserSession(peer, "User1", commands.ChannelInfo{
+							ChannelID: "testchannel",
+						})
+						Expect(err).NotTo(HaveOccurred())
+						Eventually(sess, network.EventuallyTimeout).Should(gexec.Exit(0))
+					}
 
-			By("make sure all peers have the same ledger height")
-			waitUntilAllPeersSameLedgerHeight(network, expectedPeers, "testchannel", getLedgerHeight(network, network.Peer("org1", "peer0"), "testchannel"))
+					channelInfoStr := strings.TrimPrefix(string(sess.Buffer().Contents()[:]), "Blockchain info:")
+					var channelInfo = common.BlockchainInfo{}
+					json.Unmarshal([]byte(channelInfoStr), &channelInfo)
+					return int(channelInfo.Height)
+				}(), network.EventuallyTimeout).Should(Equal(getLedgerHeight(network, network.Peer("org1", "peer0"), "testchannel")))
+			}
+
+			By("verifying membership")
+			expectedDiscoveredPeers := make([]nwo.DiscoveredPeer, 0, len(expectedPeers))
+			for _, peer := range expectedPeers {
+				expectedDiscoveredPeers = append(expectedDiscoveredPeers, network.DiscoveredPeer(peer, "marblesp"))
+			}
+			for _, peer := range expectedPeers {
+				By(fmt.Sprintf("checking expected peers for peer: %s", peer.ID()))
+				if peer.ID() == "org2.peer1" {
+					// use Admin2 user for org2.peer1
+					Eventually(nwo.DiscoverPeers(network, peer, "Admin2", "testchannel"), network.EventuallyTimeout).Should(ConsistOf(expectedDiscoveredPeers))
+				} else {
+					Eventually(nwo.DiscoverPeers(network, peer, "User1", "testchannel"), network.EventuallyTimeout).Should(ConsistOf(expectedDiscoveredPeers))
+				}
+			}
 
 			By("verify peer1.org2 got the private data that was created historically")
-			verifyAccess(
-				network,
-				commands.ChaincodeQuery{
-					ChannelID: "testchannel",
-					Name:      "marblesp",
-					Ctor:      `{"Args":["readMarble","marble1"]}`},
-				[]*nwo.Peer{org2peer1},
-				`{"docType":"marble","name":"marble1","color":"blue","size":35,"owner":"tom"}`)
+			sess, err = network.PeerUserSession(org2peer1, "Admin2", commands.ChaincodeQuery{
+				ChannelID: "testchannel",
+				Name:      "marblesp",
+				Ctor:      `{"Args":["readMarble","marble1"]}`,
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Eventually(sess, network.EventuallyTimeout).Should(gexec.Exit(0))
+			Expect(sess).To(gbytes.Say(`{"docType":"marble","name":"marble1","color":"blue","size":35,"owner":"tom"}`))
 
-			verifyAccess(
-				network,
-				commands.ChaincodeQuery{
-					ChannelID: "testchannel",
-					Name:      "marblesp",
-					Ctor:      `{"Args":["readMarblePrivateDetails","marble1"]}`},
-				[]*nwo.Peer{org2peer1},
-				`{"docType":"marblePrivateDetails","name":"marble1","price":99}`)
+			sess, err = network.PeerUserSession(org2peer1, "Admin2", commands.ChaincodeQuery{
+				ChannelID: "testchannel",
+				Name:      "marblesp",
+				Ctor:      `{"Args":["readMarblePrivateDetails","marble1"]}`,
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Eventually(sess, network.EventuallyTimeout).Should(gexec.Exit(0))
+			Expect(sess).To(gbytes.Say(`{"docType":"marblePrivateDetails","name":"marble1","price":99}`))
 		})
 	})
 

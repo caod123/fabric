@@ -90,10 +90,11 @@ func (c ChannelJoin) Args() []string {
 }
 
 type ChannelFetch struct {
-	ChannelID  string
-	Block      string
-	Orderer    string
-	OutputFile string
+	ChannelID         string
+	Block             string
+	Orderer           string
+	OutputFile        string
+	SpecifiedBlockNum string
 }
 
 func (c ChannelFetch) SessionName() string {
@@ -102,7 +103,12 @@ func (c ChannelFetch) SessionName() string {
 
 func (c ChannelFetch) Args() []string {
 	args := []string{
-		"channel", "fetch", c.Block,
+		"channel", "fetch",
+	}
+	if c.SpecifiedBlockNum != "" {
+		args = append(args, c.SpecifiedBlockNum)
+	} else {
+		args = append(args, c.Block)
 	}
 	if c.ChannelID != "" {
 		args = append(args, "--channelID", c.ChannelID)
