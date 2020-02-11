@@ -39,23 +39,23 @@ type Orderer struct {
 // It sets the mod_policy of all elements to "Admins".  This group is always present in any channel configuration.
 func NewOrdererGroup(conf *Orderer, mspConfig *msp.MSPConfig) (*common.ConfigGroup, error) {
 	ordererGroup := NewConfigGroup()
-	if err := AddPolicies(ordererGroup, conf.Policies, AdminsPolicyKey); err != nil {
+	if err := addPolicies(ordererGroup, conf.Policies, AdminsPolicyKey); err != nil {
 		return nil, fmt.Errorf("error adding policies to orderer group: %v", err)
 	}
 	ordererGroup.Policies[BlockValidationPolicyKey] = &common.ConfigPolicy{
-		Policy:    ImplicitMetaAnyPolicy(WritersPolicyKey).Value(),
+		Policy:    implicitMetaAnyPolicy(WritersPolicyKey).Value(),
 		ModPolicy: AdminsPolicyKey,
 	}
-	addValue(ordererGroup, BatchSizeValue(
+	addValue(ordererGroup, batchSizeValue(
 		conf.BatchSize.MaxMessageCount,
 		conf.BatchSize.AbsoluteMaxBytes,
 		conf.BatchSize.PreferredMaxBytes,
 	), AdminsPolicyKey)
-	addValue(ordererGroup, BatchTimeoutValue(conf.BatchTimeout.String()), AdminsPolicyKey)
-	addValue(ordererGroup, ChannelRestrictionsValue(conf.MaxChannels), AdminsPolicyKey)
+	addValue(ordererGroup, batchTimeoutValue(conf.BatchTimeout.String()), AdminsPolicyKey)
+	addValue(ordererGroup, channelRestrictionsValue(conf.MaxChannels), AdminsPolicyKey)
 
 	if len(conf.Capabilities) > 0 {
-		addValue(ordererGroup, CapabilitiesValue(conf.Capabilities), AdminsPolicyKey)
+		addValue(ordererGroup, capabilitiesValue(conf.Capabilities), AdminsPolicyKey)
 	}
 
 	var consensusMetadata []byte
@@ -64,22 +64,22 @@ func NewOrdererGroup(conf *Orderer, mspConfig *msp.MSPConfig) (*common.ConfigGro
 	switch conf.OrdererType {
 	case ConsensusTypeSolo:
 	case ConsensusTypeKafka:
-		addValue(ordererGroup, KafkaBrokersValue(conf.Kafka.Brokers), AdminsPolicyKey)
+		addValue(ordererGroup, kafkaBrokersValue(conf.Kafka.Brokers), AdminsPolicyKey)
 	case ConsensusTypeEtcdRaft:
-		if consensusMetadata, err = MarshalEtcdRaftMetadata(conf.EtcdRaft); err != nil {
+		if consensusMetadata, err = marshalEtcdRaftMetadata(conf.EtcdRaft); err != nil {
 			return nil, fmt.Errorf("cannot marshal metadata for orderer type %s: %v", ConsensusTypeEtcdRaft, err)
 		}
 	default:
-		return nil, fmt.Errorf("unknown orderer type: %s error: %v", conf.OrdererType, err)
+		return nil, fmt.Errorf("unknown orderer type, %s", conf.OrdererType)
 	}
 
-	addValue(ordererGroup, ConsensusTypeValue(conf.OrdererType, consensusMetadata), AdminsPolicyKey)
+	addValue(ordererGroup, consensusTypeValue(conf.OrdererType, consensusMetadata), AdminsPolicyKey)
 
 	for _, org := range conf.Organizations {
 		var err error
-		ordererGroup.Groups[org.Name], err = NewOrdererOrgGroup(org, mspConfig)
+		ordererGroup.Groups[org.Name], err = newOrdererOrgGroup(org, mspConfig)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create orderer org %v", err)
+			return nil, fmt.Errorf("failed to create orderer org %s: %v", org.Name, err)
 		}
 	}
 
@@ -89,7 +89,7 @@ func NewOrdererGroup(conf *Orderer, mspConfig *msp.MSPConfig) (*common.ConfigGro
 
 // NewOrdererOrgGroup returns an orderer org component of the channel configuration.  It defines the crypto material for the
 // organization (its MSP).  It sets the mod_policy of all elements to "Admins".
-func NewOrdererOrgGroup(conf *Organization, mspConfig *msp.MSPConfig) (*common.ConfigGroup, error) {
+func newOrdererOrgGroup(conf *Organization, mspConfig *msp.MSPConfig) (*common.ConfigGroup, error) {
 	ordererOrgGroup := NewConfigGroup()
 	ordererOrgGroup.ModPolicy = AdminsPolicyKey
 
@@ -97,22 +97,22 @@ func NewOrdererOrgGroup(conf *Organization, mspConfig *msp.MSPConfig) (*common.C
 		return ordererOrgGroup, nil
 	}
 
-	if err := AddPolicies(ordererOrgGroup, conf.Policies, AdminsPolicyKey); err != nil {
-		return nil, fmt.Errorf("error adding policies to orderer org group '%s' error: %v", conf.Name, err)
+	if err := addPolicies(ordererOrgGroup, conf.Policies, AdminsPolicyKey); err != nil {
+		return nil, fmt.Errorf("error adding policies to orderer org group %s: %v", conf.Name, err)
 	}
 
 	addValue(ordererOrgGroup, MSPValue(mspConfig), AdminsPolicyKey)
 
 	if len(conf.OrdererEndpoints) > 0 {
-		addValue(ordererOrgGroup, EndpointsValue(conf.OrdererEndpoints), AdminsPolicyKey)
+		addValue(ordererOrgGroup, endpointsValue(conf.OrdererEndpoints), AdminsPolicyKey)
 	}
 
 	return ordererOrgGroup, nil
 }
 
-// BatchSizeValue returns the config definition for the orderer batch size.
+// batchSizeValue returns the config definition for the orderer batch size.
 // It is a value for the /Channel/Orderer group.
-func BatchSizeValue(maxMessages, absoluteMaxBytes, preferredMaxBytes uint32) *StandardConfigValue {
+func batchSizeValue(maxMessages, absoluteMaxBytes, preferredMaxBytes uint32) *StandardConfigValue {
 	return &StandardConfigValue{
 		key: BatchSizeKey,
 		value: &orderer.BatchSize{
@@ -123,9 +123,9 @@ func BatchSizeValue(maxMessages, absoluteMaxBytes, preferredMaxBytes uint32) *St
 	}
 }
 
-// BatchTimeoutValue returns the config definition for the orderer batch timeout.
+// batchTimeoutValue returns the config definition for the orderer batch timeout.
 // It is a value for the /Channel/Orderer group.
-func BatchTimeoutValue(timeout string) *StandardConfigValue {
+func batchTimeoutValue(timeout string) *StandardConfigValue {
 	return &StandardConfigValue{
 		key: BatchTimeoutKey,
 		value: &orderer.BatchTimeout{
@@ -134,9 +134,9 @@ func BatchTimeoutValue(timeout string) *StandardConfigValue {
 	}
 }
 
-// EndpointsValue returns the config definition for the orderer addresses at an org scoped level.
+// endpointsValue returns the config definition for the orderer addresses at an org scoped level.
 // It is a value for the /Channel/Orderer/<OrgName> group.
-func EndpointsValue(addresses []string) *StandardConfigValue {
+func endpointsValue(addresses []string) *StandardConfigValue {
 	return &StandardConfigValue{
 		key: EndpointsKey,
 		value: &common.OrdererAddresses{
@@ -145,9 +145,9 @@ func EndpointsValue(addresses []string) *StandardConfigValue {
 	}
 }
 
-// ChannelRestrictionsValue returns the config definition for the orderer channel restrictions.
+// channelRestrictionsValue returns the config definition for the orderer channel restrictions.
 // It is a value for the /Channel/Orderer group.
-func ChannelRestrictionsValue(maxChannelCount uint64) *StandardConfigValue {
+func channelRestrictionsValue(maxChannelCount uint64) *StandardConfigValue {
 	return &StandardConfigValue{
 		key: ChannelRestrictionsKey,
 		value: &orderer.ChannelRestrictions{
@@ -156,9 +156,9 @@ func ChannelRestrictionsValue(maxChannelCount uint64) *StandardConfigValue {
 	}
 }
 
-// KafkaBrokersValue returns the config definition for the addresses of the ordering service's Kafka brokers.
+// kafkaBrokersValue returns the config definition for the addresses of the ordering service's Kafka brokers.
 // It is a value for the /Channel/Orderer group.
-func KafkaBrokersValue(brokers []string) *StandardConfigValue {
+func kafkaBrokersValue(brokers []string) *StandardConfigValue {
 	return &StandardConfigValue{
 		key: KafkaBrokersKey,
 		value: &orderer.KafkaBrokers{
@@ -167,8 +167,8 @@ func KafkaBrokersValue(brokers []string) *StandardConfigValue {
 	}
 }
 
-// MarshalEtcdRaftMetadata serializes etcd RAFT metadata.
-func MarshalEtcdRaftMetadata(md *etcdraft.ConfigMetadata) ([]byte, error) {
+// marshalEtcdRaftMetadata serializes etcd RAFT metadata.
+func marshalEtcdRaftMetadata(md *etcdraft.ConfigMetadata) ([]byte, error) {
 	copyMd := proto.Clone(md).(*etcdraft.ConfigMetadata)
 	for _, c := range copyMd.Consenters {
 		// Expect the user to set the config value for client/server certs to the
@@ -190,7 +190,7 @@ func MarshalEtcdRaftMetadata(md *etcdraft.ConfigMetadata) ([]byte, error) {
 
 // ConsensusTypeValue returns the config definition for the orderer consensus type.
 // It is a value for the /Channel/Orderer group.
-func ConsensusTypeValue(consensusType string, consensusMetadata []byte) *StandardConfigValue {
+func consensusTypeValue(consensusType string, consensusMetadata []byte) *StandardConfigValue {
 	return &StandardConfigValue{
 		key: ConsensusTypeKey,
 		value: &orderer.ConsensusType{

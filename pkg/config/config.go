@@ -20,7 +20,7 @@ import (
 	"github.com/hyperledger/fabric-protos-go/common"
 )
 
-// MSPConfig ...
+// MSPConfig encapsulates configuration information for an MSP
 type MSPConfig struct {
 	Admincert                     [][]byte                 // pem encoded admin cert
 	Rootcert                      [][]byte                 // pem encoded root cert (CA)
@@ -35,7 +35,7 @@ type MSPConfig struct {
 	FabricNodeOus                 *msp.FabricNodeOUs       // nodeOU stuff.
 }
 
-// Profile ...
+// Profile encapsulates basic information for a configtxgen profile.
 type Profile struct {
 	Consortium   string
 	Application  *Application
@@ -115,18 +115,9 @@ func (scv *StandardConfigPolicy) Value() *common.Policy {
 	return scv.value
 }
 
-// ConfigPolicy ...
-type ConfigPolicy interface {
-	// Key is the key this value should be stored in the *common.ConfigGroup.Policies map.
-	Key() string
-
-	// Value is the backing policy implementation for this ConfigPolicy
-	Value() *common.Policy
-}
-
-// MarshalOrPanic serializes a protobuf message and panics if this
+// marshalOrPanic serializes a protobuf message and panics if this
 // operation fails
-func MarshalOrPanic(pb proto.Message) []byte {
+func marshalOrPanic(pb proto.Message) []byte {
 	data, err := proto.Marshal(pb)
 	if err != nil {
 		panic(err)
@@ -153,19 +144,11 @@ func MakeChannelHeader(headerType common.HeaderType, version int32, channelID st
 	}
 }
 
-// MakeSignatureHeader creates a SignatureHeader.
-func MakeSignatureHeader(serializedCreatorCertChain []byte, nonce []byte) *common.SignatureHeader {
-	return &common.SignatureHeader{
-		Creator: serializedCreatorCertChain,
-		Nonce:   nonce,
-	}
-}
-
 // MakePayloadHeader creates a Payload Header.
 func MakePayloadHeader(ch *common.ChannelHeader, sh *common.SignatureHeader) *common.Header {
 	return &common.Header{
-		ChannelHeader:   MarshalOrPanic(ch),
-		SignatureHeader: MarshalOrPanic(sh),
+		ChannelHeader:   marshalOrPanic(ch),
+		SignatureHeader: marshalOrPanic(sh),
 	}
 }
 
@@ -176,14 +159,6 @@ func NewConfigGroup() *common.ConfigGroup {
 		Values:   make(map[string]*common.ConfigValue),
 		Policies: make(map[string]*common.ConfigPolicy),
 	}
-}
-
-type ConfigValue interface {
-	// Key is the key this value should be stored in the *common.ConfigGroup.Values map.
-	Key() string
-
-	// Value is the message which should be marshaled to opaque bytes for the *common.ConfigValue.value.
-	Value() proto.Message
 }
 
 // StandardConfigValue implements the ConfigValue interface.
@@ -202,46 +177,46 @@ func (scv *StandardConfigValue) Value() proto.Message {
 	return scv.value
 }
 
-// NewChannelGroup ...
-func NewChannelGroup(conf *Profile, mspConfig *msp.MSPConfig) (*common.ConfigGroup, error) {
+// newChannelGroup defines the root of the channel configuration
+func newChannelGroup(conf *Profile, mspConfig *msp.MSPConfig) (*common.ConfigGroup, error) {
 	channelGroup := NewConfigGroup()
-	if err := AddPolicies(channelGroup, conf.Policies, AdminsPolicyKey); err != nil {
+	if err := addPolicies(channelGroup, conf.Policies, AdminsPolicyKey); err != nil {
 		return nil, fmt.Errorf("error adding policies to channel group: %v", err)
 	}
 
-	addValue(channelGroup, HashingAlgorithmValue(), AdminsPolicyKey)
-	addValue(channelGroup, BlockDataHashingStructureValue(), AdminsPolicyKey)
+	addValue(channelGroup, hashingAlgorithmValue(), AdminsPolicyKey)
+	addValue(channelGroup, blockDataHashingStructureValue(), AdminsPolicyKey)
 	if conf.Orderer != nil && len(conf.Orderer.Addresses) > 0 {
 		addValue(channelGroup, OrdererAddressesValue(conf.Orderer.Addresses), ordererAdminsPolicyName)
 	}
 
 	if conf.Consortium != "" {
-		addValue(channelGroup, ConsortiumValue(conf.Consortium), AdminsPolicyKey)
+		addValue(channelGroup, consortiumValue(conf.Consortium), AdminsPolicyKey)
 	}
 
 	if len(conf.Capabilities) > 0 {
-		addValue(channelGroup, CapabilitiesValue(conf.Capabilities), AdminsPolicyKey)
+		addValue(channelGroup, capabilitiesValue(conf.Capabilities), AdminsPolicyKey)
 	}
 
 	var err error
 	if conf.Orderer != nil {
 		channelGroup.Groups[OrdererGroupKey], err = NewOrdererGroup(conf.Orderer, mspConfig)
 		if err != nil {
-			return nil, fmt.Errorf("could not create orderer group. %v", err)
+			return nil, fmt.Errorf("could not create orderer group: %v", err)
 		}
 	}
 
 	if conf.Application != nil {
 		channelGroup.Groups[ApplicationGroupKey], err = NewApplicationGroup(conf.Application, mspConfig)
 		if err != nil {
-			return nil, fmt.Errorf("could not create application group. %v", err)
+			return nil, fmt.Errorf("could not create application group: %v", err)
 		}
 	}
 
 	if conf.Consortiums != nil {
 		channelGroup.Groups[ConsortiumsGroupKey], err = NewConsortiumsGroup(conf.Consortiums, mspConfig)
 		if err != nil {
-			return nil, fmt.Errorf("could not create consortiums group %v", err)
+			return nil, fmt.Errorf("could not create consortiums group: %v", err)
 		}
 	}
 
@@ -253,7 +228,7 @@ func NewChannelGroup(conf *Profile, mspConfig *msp.MSPConfig) (*common.ConfigGro
 
 // HashingAlgorithmValue returns the only currently valid hashing algorithm.
 // It is a value for the /Channel group.
-func HashingAlgorithmValue() *StandardConfigValue {
+func hashingAlgorithmValue() *StandardConfigValue {
 	return &StandardConfigValue{
 		key: HashingAlgorithmKey,
 		value: &common.HashingAlgorithm{
@@ -264,7 +239,7 @@ func HashingAlgorithmValue() *StandardConfigValue {
 
 // BlockDataHashingStructureValue returns the only currently valid block data hashing structure.
 // It is a value for the /Channel group.
-func BlockDataHashingStructureValue() *StandardConfigValue {
+func blockDataHashingStructureValue() *StandardConfigValue {
 	return &StandardConfigValue{
 		key: BlockDataHashingStructureKey,
 		value: &common.BlockDataHashingStructure{
@@ -275,28 +250,28 @@ func BlockDataHashingStructureValue() *StandardConfigValue {
 
 func addValue(cg *common.ConfigGroup, value *StandardConfigValue, modPolicy string) {
 	cg.Values[value.Key()] = &common.ConfigValue{
-		Value:     MarshalOrPanic(value.Value()),
+		Value:     marshalOrPanic(value.Value()),
 		ModPolicy: modPolicy,
 	}
 }
 
 // AddPolicies ...
-func AddPolicies(cg *common.ConfigGroup, policyMap map[string]*Policy, modPolicy string) error {
+func addPolicies(cg *common.ConfigGroup, policyMap map[string]*Policy, modPolicy string) error {
 	switch {
 	case policyMap == nil:
-		return fmt.Errorf("no policies defined")
+		return errors.New("no policies defined")
 	case policyMap[AdminsPolicyKey] == nil:
-		return fmt.Errorf("no Admins policy defined")
+		return errors.New("no Admins policy defined")
 	case policyMap[ReadersPolicyKey] == nil:
-		return fmt.Errorf("no Readers policy defined")
+		return errors.New("no Readers policy defined")
 	case policyMap[WritersPolicyKey] == nil:
-		return fmt.Errorf("no Writers policy defined")
+		return errors.New("no Writers policy defined")
 	}
 
 	for policyName, policy := range policyMap {
 		switch policy.Type {
 		case ImplicitMetaPolicyType:
-			imp, err := ImplicitMetaFromString(policy.Rule)
+			imp, err := implicitMetaFromString(policy.Rule)
 			if err != nil {
 				return fmt.Errorf("invalid implicit meta policy rule: '%s' error: %v", policy.Rule, err)
 			}
@@ -304,7 +279,7 @@ func AddPolicies(cg *common.ConfigGroup, policyMap map[string]*Policy, modPolicy
 				ModPolicy: modPolicy,
 				Policy: &common.Policy{
 					Type:  int32(common.Policy_IMPLICIT_META),
-					Value: MarshalOrPanic(imp),
+					Value: marshalOrPanic(imp),
 				},
 			}
 		case SignaturePolicyType:
@@ -316,7 +291,7 @@ func AddPolicies(cg *common.ConfigGroup, policyMap map[string]*Policy, modPolicy
 				ModPolicy: modPolicy,
 				Policy: &common.Policy{
 					Type:  int32(common.Policy_SIGNATURE),
-					Value: MarshalOrPanic(sp),
+					Value: marshalOrPanic(sp),
 				},
 			}
 		default:
@@ -327,7 +302,7 @@ func AddPolicies(cg *common.ConfigGroup, policyMap map[string]*Policy, modPolicy
 }
 
 // ImplicitMetaFromString ...
-func ImplicitMetaFromString(input string) (*common.ImplicitMetaPolicy, error) {
+func implicitMetaFromString(input string) (*common.ImplicitMetaPolicy, error) {
 	args := strings.Split(input, " ")
 	if len(args) != 2 {
 		return nil, fmt.Errorf("expected two space separated tokens, but got %d", len(args))
@@ -362,9 +337,9 @@ func OrdererAddressesValue(addresses []string) *StandardConfigValue {
 	}
 }
 
-// CapabilitiesValue returns the config definition for a a set of capabilities.
+// capabilitiesValue returns the config definition for a a set of capabilities.
 // It is a value for the /Channel/Orderer, Channel/Application/, and /Channel groups.
-func CapabilitiesValue(capabilities map[string]bool) *StandardConfigValue {
+func capabilitiesValue(capabilities map[string]bool) *StandardConfigValue {
 	c := &common.Capabilities{
 		Capabilities: make(map[string]*common.Capability),
 	}
@@ -394,17 +369,10 @@ func MSPValue(mspDef *msp.MSPConfig) *StandardConfigValue {
 func makeImplicitMetaPolicy(subPolicyName string, rule common.ImplicitMetaPolicy_Rule) *common.Policy {
 	return &common.Policy{
 		Type: int32(common.Policy_IMPLICIT_META),
-		Value: MarshalOrPanic(&common.ImplicitMetaPolicy{
+		Value: marshalOrPanic(&common.ImplicitMetaPolicy{
 			Rule:      rule,
 			SubPolicy: subPolicyName,
 		}),
-	}
-}
-
-func addPolicy(cg *common.ConfigGroup, policy ConfigPolicy, modPolicy string) {
-	cg.Policies[policy.Key()] = &common.ConfigPolicy{
-		Policy:    policy.Value(),
-		ModPolicy: modPolicy,
 	}
 }
 
@@ -414,60 +382,13 @@ func SignaturePolicy(policyName string, sigPolicy *common.SignaturePolicyEnvelop
 		key: policyName,
 		value: &common.Policy{
 			Type:  int32(common.Policy_SIGNATURE),
-			Value: MarshalOrPanic(sigPolicy),
+			Value: marshalOrPanic(sigPolicy),
 		},
 	}
-}
-
-// ConfigTemplateFromGroup ...
-func ConfigTemplateFromGroup(conf *Profile, cg *common.ConfigGroup) (*common.ConfigGroup, error) {
-
-	template := proto.Clone(cg).(*common.ConfigGroup)
-	if template.Groups == nil {
-		return nil, errors.New("supplied system channel group has no sub-groups")
-	}
-
-	template.Groups[ApplicationGroupKey] = &common.ConfigGroup{
-		Groups: map[string]*common.ConfigGroup{},
-		Policies: map[string]*common.ConfigPolicy{
-			AdminsPolicyKey: {},
-		},
-	}
-
-	consortiums, ok := template.Groups[ConsortiumsGroupKey]
-	if !ok {
-		return nil, errors.New("supplied system channel group does not appear to be system channel (missing consortiums group)")
-	}
-
-	if consortiums.Groups == nil {
-		return nil, errors.New("system channel consortiums group appears to have no consortiums defined")
-	}
-
-	consortium, ok := consortiums.Groups[conf.Consortium]
-	if !ok {
-		return nil, fmt.Errorf("supplied system channel group is missing '%s' consortium", conf.Consortium)
-	}
-
-	if conf.Application == nil {
-		return nil, errors.New("supplied channel creation profile does not contain an application section")
-	}
-
-	for _, organization := range conf.Application.Organizations {
-		var ok bool
-		template.Groups[ApplicationGroupKey].Groups[organization.Name], ok = consortium.Groups[organization.Name]
-		if !ok {
-			return nil, fmt.Errorf("consortium %s does not contain member org %s", conf.Consortium, organization.Name)
-		}
-	}
-	delete(template.Groups, ConsortiumsGroupKey)
-
-	addValue(template, ConsortiumValue(conf.Consortium), AdminsPolicyKey)
-
-	return template, nil
 }
 
 // ImplicitMetaAnyPolicy defines an implicit meta policy whose sub_policy and key is policyname with rule ANY.
-func ImplicitMetaAnyPolicy(policyName string) *StandardConfigPolicy {
+func implicitMetaAnyPolicy(policyName string) *StandardConfigPolicy {
 	return &StandardConfigPolicy{
 		key:   policyName,
 		value: makeImplicitMetaPolicy(policyName, common.ImplicitMetaPolicy_ANY),
@@ -477,14 +398,14 @@ func ImplicitMetaAnyPolicy(policyName string) *StandardConfigPolicy {
 // DefaultConfigTemplate generates a config template based on the assumption that
 // the input profile is a channel creation template and no system channel context
 // is available.
-func DefaultConfigTemplate(conf *Profile, mspConfig *msp.MSPConfig) (*common.ConfigGroup, error) {
-	channelGroup, err := NewChannelGroup(conf, mspConfig)
+func defaultConfigTemplate(conf *Profile, mspConfig *msp.MSPConfig) (*common.ConfigGroup, error) {
+	channelGroup, err := newChannelGroup(conf, mspConfig)
 	if err != nil {
-		return nil, fmt.Errorf("error parsing configuration %v", err)
+		return nil, err
 	}
 
 	if _, ok := channelGroup.Groups[ApplicationGroupKey]; !ok {
-		return nil, fmt.Errorf("channel template configs must contain an application section %v", err)
+		return nil, errors.New("channel template config must contain an application section")
 	}
 
 	channelGroup.Groups[ApplicationGroupKey].Values = nil
@@ -495,7 +416,7 @@ func DefaultConfigTemplate(conf *Profile, mspConfig *msp.MSPConfig) (*common.Con
 
 // NewChannelCreateConfigUpdate generates a ConfigUpdate which can be sent to the orderer to create a new channel.  Optionally, the channel group of the
 // ordering system channel may be passed in, and the resulting ConfigUpdate will extract the appropriate versions from this file.
-func NewChannelCreateConfigUpdate(channelID string, conf *Profile, templateConfig *common.ConfigGroup, mspConfig *msp.MSPConfig) (*common.ConfigUpdate, error) {
+func newChannelCreateConfigUpdate(channelID string, conf *Profile, templateConfig *common.ConfigGroup, mspConfig *msp.MSPConfig) (*common.ConfigUpdate, error) {
 	if conf.Application == nil {
 		return nil, errors.New("cannot define a new channel with no Application section")
 	}
@@ -504,7 +425,7 @@ func NewChannelCreateConfigUpdate(channelID string, conf *Profile, templateConfi
 		return nil, errors.New("cannot define a new channel with no Consortium value")
 	}
 
-	newChannelGroup, err := NewChannelGroup(conf, mspConfig)
+	newChannelGroup, err := newChannelGroup(conf, mspConfig)
 	if err != nil {
 		return nil, fmt.Errorf("could not turn parse profile into channel group %v", err)
 	}
@@ -519,7 +440,7 @@ func NewChannelCreateConfigUpdate(channelID string, conf *Profile, templateConfi
 	updt.ReadSet.Values[ConsortiumKey] = &common.ConfigValue{Version: 0}
 	updt.WriteSet.Values[ConsortiumKey] = &common.ConfigValue{
 		Version: 0,
-		Value: MarshalOrPanic(&common.Consortium{
+		Value: marshalOrPanic(&common.Consortium{
 			Name: conf.Consortium,
 		}),
 	}
@@ -527,8 +448,9 @@ func NewChannelCreateConfigUpdate(channelID string, conf *Profile, templateConfi
 	return updt, nil
 }
 
-// CreateEnvelope ...
-func CreateEnvelope(
+// CreateEnvelope creates an unsigned envelope of type txType using with the marshalled
+// proto message
+func createEnvelope(
 	txType common.HeaderType,
 	channelID string,
 	dataMsg proto.Message,
@@ -544,7 +466,7 @@ func CreateEnvelope(
 		return nil, fmt.Errorf("error marshaling %v", err)
 	}
 
-	paylBytes := MarshalOrPanic(
+	paylBytes := marshalOrPanic(
 		&common.Payload{
 			Header: MakePayloadHeader(payloadChannelHeader, payloadSignatureHeader),
 			Data:   data,
@@ -562,13 +484,13 @@ func CreateEnvelope(
 func CreateChannelTx(profile *Profile, mspConfig *MSPConfig, options ...Option) (*common.Envelope, error) {
 
 	if profile == nil {
-		return nil, errors.New("refusing to generate block which has empty channel")
+		return nil, errors.New("failed to create channel tx because profile is empty")
 	}
 
 	channelID := profile.ChannelID
 
 	if channelID == "" {
-		return nil, errors.New("refusing to generate block which has empty channel ID")
+		return nil, errors.New("failed to create channel tx because channel ID is empty")
 	}
 
 	fmspconf := &msp.FabricMSPConfig{
@@ -588,21 +510,21 @@ func CreateChannelTx(profile *Profile, mspConfig *MSPConfig, options ...Option) 
 	fmpsjs, _ := proto.Marshal(fmspconf)
 	mspconf := &msp.MSPConfig{Config: fmpsjs, Type: 0} //Type 0 : FABRIC
 
-	ct, err := DefaultConfigTemplate(profile, mspconf)
+	ct, err := defaultConfigTemplate(profile, mspconf)
 	if err != nil {
-		return nil, fmt.Errorf("could not generate default config template, %v", err)
+		return nil, fmt.Errorf("could not generate default config template: %v", err)
 	}
 
-	newChannelConfigUpdate, err := NewChannelCreateConfigUpdate(channelID, profile, ct, mspconf)
+	newChannelConfigUpdate, err := newChannelCreateConfigUpdate(channelID, profile, ct, mspconf)
 	if err != nil {
-		return nil, fmt.Errorf("config update generation failure %v", err)
+		return nil, fmt.Errorf("config update generation failure: %v", err)
 	}
 
 	newConfigUpdateEnv := &common.ConfigUpdateEnvelope{
-		ConfigUpdate: MarshalOrPanic(newChannelConfigUpdate),
+		ConfigUpdate: marshalOrPanic(newChannelConfigUpdate),
 	}
 
-	env, err := CreateEnvelope(common.HeaderType_CONFIG_UPDATE, channelID, newConfigUpdateEnv, msgVersion, epoch)
+	env, err := createEnvelope(common.HeaderType_CONFIG_UPDATE, channelID, newConfigUpdateEnv, msgVersion, epoch)
 
 	return env, err
 

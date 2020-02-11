@@ -179,7 +179,7 @@ func secondPass(args ...interface{}) (interface{}, error) {
 			/* build the principal we've been told */
 			p := &msp.MSPPrincipal{
 				PrincipalClassification: msp.MSPPrincipal_ROLE,
-				Principal:               MarshalOrPanic(&msp.MSPRole{MspIdentifier: subm[0][1], Role: r})}
+				Principal:               marshalOrPanic(&msp.MSPRole{MspIdentifier: subm[0][1], Role: r})}
 			ctx.principals = append(ctx.principals, p)
 
 			/* create a SignaturePolicy that requires a signature from
@@ -203,7 +203,7 @@ func secondPass(args ...interface{}) (interface{}, error) {
 		}
 	}
 
-	return NOutOf(int32(t), policies), nil
+	return nOutOf(int32(t), policies), nil
 }
 
 type context struct {

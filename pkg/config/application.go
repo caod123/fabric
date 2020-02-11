@@ -36,23 +36,23 @@ type AnchorPeer struct {
 // in application logic like chaincodes, and how these members may interact with the orderer.  It sets the mod_policy of all elements to "Admins".
 func NewApplicationGroup(conf *Application, mspConfig *msp.MSPConfig) (*common.ConfigGroup, error) {
 	applicationGroup := NewConfigGroup()
-	if err := AddPolicies(applicationGroup, conf.Policies, AdminsPolicyKey); err != nil {
+	if err := addPolicies(applicationGroup, conf.Policies, AdminsPolicyKey); err != nil {
 		return nil, fmt.Errorf("error adding policies to application group: %v", err)
 	}
 
 	if len(conf.ACLs) > 0 {
-		addValue(applicationGroup, ACLValues(conf.ACLs), AdminsPolicyKey)
+		addValue(applicationGroup, aclValues(conf.ACLs), AdminsPolicyKey)
 	}
 
 	if len(conf.Capabilities) > 0 {
-		addValue(applicationGroup, CapabilitiesValue(conf.Capabilities), AdminsPolicyKey)
+		addValue(applicationGroup, capabilitiesValue(conf.Capabilities), AdminsPolicyKey)
 	}
 
 	for _, org := range conf.Organizations {
 		var err error
-		applicationGroup.Groups[org.Name], err = NewApplicationOrgGroup(org, mspConfig)
+		applicationGroup.Groups[org.Name], err = newApplicationOrgGroup(org, mspConfig)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create application org %v", err)
+			return nil, fmt.Errorf("failed to create application org %s: %v", org.Name, err)
 		}
 	}
 
@@ -62,7 +62,7 @@ func NewApplicationGroup(conf *Application, mspConfig *msp.MSPConfig) (*common.C
 
 // NewApplicationOrgGroup returns an application org component of the channel configuration.  It defines the crypto material for the organization
 // (its MSP) as well as its anchor peers for use by the gossip network.  It sets the mod_policy of all elements to "Admins".
-func NewApplicationOrgGroup(conf *Organization, mspConfig *msp.MSPConfig) (*common.ConfigGroup, error) {
+func newApplicationOrgGroup(conf *Organization, mspConfig *msp.MSPConfig) (*common.ConfigGroup, error) {
 	applicationOrgGroup := NewConfigGroup()
 	applicationOrgGroup.ModPolicy = AdminsPolicyKey
 
@@ -70,8 +70,8 @@ func NewApplicationOrgGroup(conf *Organization, mspConfig *msp.MSPConfig) (*comm
 		return applicationOrgGroup, nil
 	}
 
-	if err := AddPolicies(applicationOrgGroup, conf.Policies, AdminsPolicyKey); err != nil {
-		return nil, fmt.Errorf("error adding policies to application org group %s %v", conf.Name, err)
+	if err := addPolicies(applicationOrgGroup, conf.Policies, AdminsPolicyKey); err != nil {
+		return nil, fmt.Errorf("error adding policies to application org group %s: %v", conf.Name, err)
 	}
 
 	addValue(applicationOrgGroup, MSPValue(mspConfig), AdminsPolicyKey)
@@ -88,7 +88,7 @@ func NewApplicationOrgGroup(conf *Organization, mspConfig *msp.MSPConfig) (*comm
 	// prevent a delta from the orderer system channel when computing more complex channel
 	// creation transactions
 	if len(anchorProtos) > 0 {
-		addValue(applicationOrgGroup, AnchorPeersValue(anchorProtos), AdminsPolicyKey)
+		addValue(applicationOrgGroup, anchorPeersValue(anchorProtos), AdminsPolicyKey)
 	}
 
 	return applicationOrgGroup, nil
@@ -96,7 +96,7 @@ func NewApplicationOrgGroup(conf *Organization, mspConfig *msp.MSPConfig) (*comm
 
 // ACLValues returns the config definition for an applications resources based ACL definitions.
 // It is a value for the /Channel/Application/.
-func ACLValues(acls map[string]string) *StandardConfigValue {
+func aclValues(acls map[string]string) *StandardConfigValue {
 	a := &pb.ACLs{
 		Acls: make(map[string]*pb.APIResource),
 	}
@@ -113,7 +113,7 @@ func ACLValues(acls map[string]string) *StandardConfigValue {
 
 // AnchorPeersValue returns the config definition for an org's anchor peers.
 // It is a value for the /Channel/Application/*.
-func AnchorPeersValue(anchorPeers []*pb.AnchorPeer) *StandardConfigValue {
+func anchorPeersValue(anchorPeers []*pb.AnchorPeer) *StandardConfigValue {
 	return &StandardConfigValue{
 		key:   AnchorPeersKey,
 		value: &pb.AnchorPeers{AnchorPeers: anchorPeers},

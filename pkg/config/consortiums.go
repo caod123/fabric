@@ -22,6 +22,15 @@ type Consortium struct {
 	Organizations []*Organization
 }
 
+// ConfigPolicy ...
+type ConfigPolicy interface {
+	// Key is the key this value should be stored in the *common.ConfigGroup.Policies map.
+	Key() string
+
+	// Value is the backing policy implementation for this ConfigPolicy
+	Value() *common.Policy
+}
+
 // Consortiums
 
 // NewConsortiumsGroup returns the consortiums component of the channel configuration.  This element is only defined for the ordering system channel.
@@ -30,16 +39,16 @@ func NewConsortiumsGroup(conf map[string]*Consortium, mspConfig *msp.MSPConfig) 
 	consortiumsGroup := NewConfigGroup()
 
 	// QUESTION: How should we set this? the original impl did it globally...
-	AcceptAllPolicy = Envelope(NOutOf(0, []*common.SignaturePolicy{}), [][]byte{})
+	AcceptAllPolicy = envelope(nOutOf(0, []*common.SignaturePolicy{}), [][]byte{})
 	// This policy is not referenced anywhere, it is only used as part of the implicit meta policy rule at the channel level, so this setting
 	// effectively degrades control of the ordering system channel to the ordering admins
 	addPolicy(consortiumsGroup, SignaturePolicy(AdminsPolicyKey, AcceptAllPolicy), ordererAdminsPolicyName)
 
 	for consortiumName, consortium := range conf {
 		var err error
-		consortiumsGroup.Groups[consortiumName], err = NewConsortiumGroup(consortium, mspConfig)
+		consortiumsGroup.Groups[consortiumName], err = newConsortiumGroup(consortium, mspConfig)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create consortium, %s error: %v", consortiumName, err)
+			return nil, err
 		}
 	}
 
@@ -48,18 +57,18 @@ func NewConsortiumsGroup(conf map[string]*Consortium, mspConfig *msp.MSPConfig) 
 }
 
 // NewConsortiumGroup ...
-func NewConsortiumGroup(conf *Consortium, mspConfig *msp.MSPConfig) (*common.ConfigGroup, error) {
+func newConsortiumGroup(conf *Consortium, mspConfig *msp.MSPConfig) (*common.ConfigGroup, error) {
 	consortiumGroup := NewConfigGroup()
 
 	for _, org := range conf.Organizations {
 		var err error
-		consortiumGroup.Groups[org.Name], err = NewConsortiumOrgGroup(org, mspConfig)
+		consortiumGroup.Groups[org.Name], err = newConsortiumOrgGroup(org, mspConfig)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create consortium org %v", err)
+			return nil, err
 		}
 	}
 
-	addValue(consortiumGroup, ChannelCreationPolicyValue(ImplicitMetaAnyPolicy(AdminsPolicyKey).Value()), ordererAdminsPolicyName)
+	addValue(consortiumGroup, channelCreationPolicyValue(implicitMetaAnyPolicy(AdminsPolicyKey).Value()), ordererAdminsPolicyName)
 
 	consortiumGroup.ModPolicy = ordererAdminsPolicyName
 	return consortiumGroup, nil
@@ -67,26 +76,26 @@ func NewConsortiumGroup(conf *Consortium, mspConfig *msp.MSPConfig) (*common.Con
 
 // NewConsortiumOrgGroup returns an org component of the channel configuration.  It defines the crypto material for the
 // organization (its MSP).  It sets the mod_policy of all elements to "Admins".
-func NewConsortiumOrgGroup(conf *Organization, mspConfig *msp.MSPConfig) (*common.ConfigGroup, error) {
-	consortiumsOrgGroup := NewConfigGroup()
-	consortiumsOrgGroup.ModPolicy = AdminsPolicyKey
+func newConsortiumOrgGroup(conf *Organization, mspConfig *msp.MSPConfig) (*common.ConfigGroup, error) {
+	consortiumOrgGroup := NewConfigGroup()
+	consortiumOrgGroup.ModPolicy = AdminsPolicyKey
 
 	if conf.SkipAsForeign {
-		return consortiumsOrgGroup, nil
+		return consortiumOrgGroup, nil
 	}
 
-	if err := AddPolicies(consortiumsOrgGroup, conf.Policies, AdminsPolicyKey); err != nil {
-		return nil, fmt.Errorf("error adding policies to consortiums org group '%s' error: %v", conf.Name, err)
+	if err := addPolicies(consortiumOrgGroup, conf.Policies, AdminsPolicyKey); err != nil {
+		return nil, fmt.Errorf("error adding policies to consortium org group %s: %v", conf.Name, err)
 	}
 
-	addValue(consortiumsOrgGroup, MSPValue(mspConfig), AdminsPolicyKey)
+	addValue(consortiumOrgGroup, MSPValue(mspConfig), AdminsPolicyKey)
 
-	return consortiumsOrgGroup, nil
+	return consortiumOrgGroup, nil
 }
 
 // ConsortiumValue returns the config definition for the consortium name.
 // It is a value for the channel group.
-func ConsortiumValue(name string) *StandardConfigValue {
+func consortiumValue(name string) *StandardConfigValue {
 	return &StandardConfigValue{
 		key: ConsortiumKey,
 		value: &common.Consortium{
@@ -97,7 +106,7 @@ func ConsortiumValue(name string) *StandardConfigValue {
 
 // ChannelCreationPolicyValue returns the config definition for a consortium's channel creation policy
 // It is a value for the /Channel/Consortiums/*/*.
-func ChannelCreationPolicyValue(policy *common.Policy) *StandardConfigValue {
+func channelCreationPolicyValue(policy *common.Policy) *StandardConfigValue {
 	return &StandardConfigValue{
 		key:   ChannelCreationPolicyKey,
 		value: policy,
@@ -105,7 +114,7 @@ func ChannelCreationPolicyValue(policy *common.Policy) *StandardConfigValue {
 }
 
 // Envelope builds an envelope message embedding a SignaturePolicy
-func Envelope(policy *common.SignaturePolicy, identities [][]byte) *common.SignaturePolicyEnvelope {
+func envelope(policy *common.SignaturePolicy, identities [][]byte) *common.SignaturePolicyEnvelope {
 	ids := make([]*msp.MSPPrincipal, len(identities))
 	for i := range ids {
 		ids[i] = &msp.MSPPrincipal{PrincipalClassification: msp.MSPPrincipal_IDENTITY, Principal: identities[i]}
@@ -118,8 +127,8 @@ func Envelope(policy *common.SignaturePolicy, identities [][]byte) *common.Signa
 	}
 }
 
-// NOutOf creates a policy which requires N out of the slice of policies to evaluate to true
-func NOutOf(n int32, policies []*common.SignaturePolicy) *common.SignaturePolicy {
+// nOutOf creates a policy which requires N out of the slice of policies to evaluate to true
+func nOutOf(n int32, policies []*common.SignaturePolicy) *common.SignaturePolicy {
 	return &common.SignaturePolicy{
 		Type: &common.SignaturePolicy_NOutOf_{
 			NOutOf: &common.SignaturePolicy_NOutOf{
@@ -127,5 +136,12 @@ func NOutOf(n int32, policies []*common.SignaturePolicy) *common.SignaturePolicy
 				Rules: policies,
 			},
 		},
+	}
+}
+
+func addPolicy(cg *common.ConfigGroup, policy ConfigPolicy, modPolicy string) {
+	cg.Policies[policy.Key()] = &common.ConfigPolicy{
+		Policy:    policy.Value(),
+		ModPolicy: modPolicy,
 	}
 }
