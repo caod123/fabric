@@ -4,10 +4,9 @@ Copyright IBM Corp All Rights Reserved.
 SPDX-License-Identifier: Apache-2.0
 */
 
-package config
+package config_test
 
 import (
-	"bytes"
 	"io/ioutil"
 	"os"
 
@@ -17,66 +16,18 @@ import (
 	"github.com/onsi/gomega/gexec"
 
 	"github.com/hyperledger/fabric-protos-go/common"
-	"github.com/hyperledger/fabric/common/tools/protolator"
+	"github.com/hyperledger/fabric-protos-go/msp"
 	"github.com/hyperledger/fabric/integration/nwo"
 	"github.com/hyperledger/fabric/integration/nwo/commands"
+	"github.com/hyperledger/fabric/pkg/config"
 )
 
-// Question: Put these test helper functions in separate file?
-func CreateStandardPolicies() map[string]*Policy {
-	return map[string]*Policy{
-		"Readers": {
-			Type: "ImplicitMeta",
-			Rule: "ANY Readers",
-		},
-		"Writers": {
-			Type: "ImplicitMeta",
-			Rule: "ANY Writers",
-		},
-		"Admins": {
-			Type: "ImplicitMeta",
-			Rule: "MAJORITY Admins",
-		},
-		"LifecycleEndorsement": {
-			Type: "ImplicitMeta",
-			Rule: "MAJORITY Endorsement",
-		},
-		"Endorsement": {
-			Type: "ImplicitMeta",
-			Rule: "MAJORITY Endorsement",
-		},
-	}
-}
-
-// Question: Put these test helper functions in separate file?
-func CreateOrgStandardPolicies() map[string]*Policy {
-	return map[string]*Policy{
-		"Readers": {
-			Type: "ImplicitMeta",
-			Rule: "ANY Readers",
-		},
-		"Writers": {
-			Type: "ImplicitMeta",
-			Rule: "ANY Writers",
-		},
-		"Admins": {
-			Type: "ImplicitMeta",
-			Rule: "MAJORITY Admins",
-		},
-		"Endorsement": {
-			Type: "ImplicitMeta",
-			Rule: "ANY Endorsement",
-		},
-	}
-}
-
-var _ = Describe("does stuff", func() {
-
+var _ = Describe("CreateChannelTx", func() {
 	var (
 		testDir   string
 		network   *nwo.Network
-		profile   *Profile
-		mspConfig *MSPConfig
+		profile   *config.Profile
+		mspConfig *msp.FabricMSPConfig
 	)
 
 	BeforeEach(func() {
@@ -90,23 +41,23 @@ var _ = Describe("does stuff", func() {
 
 		network.Bootstrap()
 
-		profile = &Profile{
+		profile = &config.Profile{
 			ChannelID:  "testchannel",
 			Consortium: "SampleConsortium",
-			Application: &Application{
-				Policies: CreateStandardPolicies(),
-				Organizations: []*Organization{
-					&Organization{
+			Application: &config.Application{
+				Policies: createStandardPolicies(),
+				Organizations: []*config.Organization{
+					{
 						Name:     "Org1",
 						ID:       "Org1MSP",
-						Policies: CreateOrgStandardPolicies(),
+						Policies: createOrgStandardPolicies(),
 						MSPType:  "bccsp",
 						MSPDir:   network.PeerOrgMSPDir(network.Organization("Org1")),
 					},
-					&Organization{
+					{
 						Name:     "Org2",
 						ID:       "Org2MSP",
-						Policies: CreateOrgStandardPolicies(),
+						Policies: createOrgStandardPolicies(),
 						MSPType:  "bccsp",
 						MSPDir:   network.PeerOrgMSPDir(network.Organization("Org2")),
 					},
@@ -116,9 +67,10 @@ var _ = Describe("does stuff", func() {
 				},
 			},
 			Capabilities: map[string]bool{"V2_0": true},
-			Policies:     CreateStandardPolicies(),
+			Policies:     createStandardPolicies(),
 		}
-		mspConfig = &MSPConfig{}
+
+		mspConfig = &msp.FabricMSPConfig{}
 	})
 
 	AfterEach(func() {
@@ -129,14 +81,13 @@ var _ = Describe("does stuff", func() {
 	})
 
 	It("creates envelope", func() {
-
 		createChannelTxPath := network.CreateChannelTxPath(profile.ChannelID)
 
-		envelope, err := CreateChannelTx(profile, mspConfig)
+		envelope, err := config.CreateChannelTx(profile, mspConfig)
 		Expect(err).ToNot(HaveOccurred())
 		Expect(envelope).ToNot(BeNil())
 
-		By("Use configtxgen: channel creation configtx")
+		By("using configtxgen to create a create channel transaction")
 		sess, err := network.ConfigTxGen(commands.CreateChannelTx{
 			ChannelID:             profile.ChannelID,
 			Profile:               "TwoOrgsChannel",
@@ -153,50 +104,160 @@ var _ = Describe("does stuff", func() {
 		err = proto.Unmarshal(configTxBytes, &expectedEnvelope)
 		Expect(err).NotTo(HaveOccurred())
 
-		By("Compare deep unmarshaled JSON envelopes")
-		var buffer bytes.Buffer
-		err = protolator.DeepUnmarshalJSON(&buffer, envelope)
-		var expectedBuffer bytes.Buffer
-		err = protolator.DeepUnmarshalJSON(&expectedBuffer, &expectedEnvelope)
-		Expect(buffer).To(Equal(expectedBuffer))
-
 		expectedPayload := common.Payload{}
 		err = proto.Unmarshal(expectedEnvelope.Payload, &expectedPayload)
+		Expect(err).NotTo(HaveOccurred())
 
-		expectedHeader := expectedPayload.Header
-		expectedChannelHeader := common.ChannelHeader{}
-		err = proto.Unmarshal(expectedHeader.ChannelHeader, &expectedChannelHeader)
+		expectedHeader := common.ChannelHeader{}
+		err = proto.Unmarshal(expectedPayload.Header.ChannelHeader, &expectedHeader)
+		Expect(err).NotTo(HaveOccurred())
 
-		payload := common.Payload{}
-		err = proto.Unmarshal(envelope.Payload, &payload)
+		expectedData := common.ConfigUpdateEnvelope{}
+		err = proto.Unmarshal(expectedPayload.Data, &expectedData)
+		Expect(err).NotTo(HaveOccurred())
 
-		header := payload.Header
-		channelHeader := common.ChannelHeader{}
-		err = proto.Unmarshal(header.ChannelHeader, &channelHeader)
-
-		By("check channel headers are equal")
-		// Set timestamps to match
-		// the headers were generated at different times
-		expectedChannelHeader.Timestamp = channelHeader.Timestamp
-		Expect(proto.Equal(&channelHeader, &expectedChannelHeader)).To(BeTrue())
-
-		expectedConfigUpdateEnv := common.ConfigUpdateEnvelope{}
-		err = proto.Unmarshal(expectedPayload.Data, &expectedConfigUpdateEnv)
-		Expect(err).ToNot(HaveOccurred())
 		expectedConfigUpdate := common.ConfigUpdate{}
-		err = proto.Unmarshal(expectedConfigUpdateEnv.ConfigUpdate, &expectedConfigUpdate)
-		Expect(err).ToNot(HaveOccurred())
+		err = proto.Unmarshal(expectedData.ConfigUpdate, &expectedConfigUpdate)
+		Expect(err).NotTo(HaveOccurred())
 
-		configUpdateEnv := common.ConfigUpdateEnvelope{}
-		err = proto.Unmarshal(payload.Data, &configUpdateEnv)
-		Expect(err).ToNot(HaveOccurred())
-		configUpdate := common.ConfigUpdate{}
-		err = proto.Unmarshal(configUpdateEnv.ConfigUpdate, &configUpdate)
-		Expect(err).ToNot(HaveOccurred())
+		actualPayload := common.Payload{}
+		err = proto.Unmarshal(envelope.Payload, &actualPayload)
+		Expect(err).NotTo(HaveOccurred())
 
-		By("check config update are equal")
-		Expect(proto.Equal(&configUpdate, &expectedConfigUpdate)).To(BeTrue())
+		actualHeader := common.ChannelHeader{}
+		err = proto.Unmarshal(actualPayload.Header.ChannelHeader, &actualHeader)
+		Expect(err).NotTo(HaveOccurred())
 
+		actualData := common.ConfigUpdateEnvelope{}
+		err = proto.Unmarshal(actualPayload.Data, &actualData)
+		Expect(err).NotTo(HaveOccurred())
+
+		actualConfigUpdate := common.ConfigUpdate{}
+		err = proto.Unmarshal(actualData.ConfigUpdate, &actualConfigUpdate)
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(actualConfigUpdate).To(Equal(expectedConfigUpdate))
+		// SET STUFF TO EQUAL
+		actualTimestamp := actualHeader.Timestamp
+
+		expectedHeader.Timestamp = actualTimestamp
+
+		expectedData.ConfigUpdate = actualData.ConfigUpdate
+
+		// REMARSHAL EVERYTHING
+		expectedPayload.Data, err = proto.Marshal(&expectedData)
+		Expect(err).NotTo(HaveOccurred())
+
+		expectedPayload.Header.ChannelHeader, err = proto.Marshal(&expectedHeader)
+		Expect(err).NotTo(HaveOccurred())
+
+		expectedEnvelope.Payload, err = proto.Marshal(&expectedPayload)
+		Expect(err).NotTo(HaveOccurred())
+
+		// Expect(envelope).To(Equal(expectedEnvelope))
+		Expect(proto.Equal(envelope, &expectedEnvelope)).To(BeTrue())
+
+		// expectedPayload := common.Payload{}
+		// err = proto.Unmarshal(expectedEnvelope.Payload, &expectedPayload)
+		// Expect(err).NotTo(HaveOccurred())
+		//
+		// expectedHeader := expectedPayload.Header
+		// expectedChannelHeader := common.ChannelHeader{}
+		// err = proto.Unmarshal(expectedHeader.ChannelHeader, &expectedChannelHeader)
+		// Expect(err).NotTo(HaveOccurred())
+		//
+		// payload := common.Payload{}
+		// err = proto.Unmarshal(envelope.Payload, &payload)
+		// Expect(err).NotTo(HaveOccurred())
+		//
+		// header := payload.Header
+		// channelHeader := common.ChannelHeader{}
+		// err = proto.Unmarshal(header.ChannelHeader, &channelHeader)
+		// Expect(err).NotTo(HaveOccurred())
+		//
+		// By("checking channel headers are equal")
+		// // Set timestamps to match
+		// // the headers were generated at different times
+		// expectedChannelHeader.Timestamp = channelHeader.Timestamp
+		// Expect(proto.Equal(&channelHeader, &expectedChannelHeader)).To(BeTrue())
+		//
+		// expectedConfigUpdateEnv := common.ConfigUpdateEnvelope{}
+		// err = proto.Unmarshal(expectedPayload.Data, &expectedConfigUpdateEnv)
+		// Expect(err).ToNot(HaveOccurred())
+		// expectedConfigUpdate := common.ConfigUpdate{}
+		// err = proto.Unmarshal(expectedConfigUpdateEnv.ConfigUpdate, &expectedConfigUpdate)
+		// Expect(err).ToNot(HaveOccurred())
+		//
+		// configUpdateEnv := common.ConfigUpdateEnvelope{}
+		// err = proto.Unmarshal(payload.Data, &configUpdateEnv)
+		// Expect(err).ToNot(HaveOccurred())
+		// configUpdate := common.ConfigUpdate{}
+		// err = proto.Unmarshal(configUpdateEnv.ConfigUpdate, &configUpdate)
+		// Expect(err).ToNot(HaveOccurred())
+		//
+		// By("checking config update are equal")
+		// Expect(proto.Equal(&configUpdate, &expectedConfigUpdate)).To(BeTrue())
+		//
+		// // Stuff
+		// expectedEnvelope = common.Envelope{
+		// 	ConfigUpdateEnvelope: protoMarshalOrPanic(configUpdate),
+		// }
+		//
+		// By("comparing deep unmarshaled JSON envelopes")
+		// var buffer bytes.Buffer
+		// err = protolator.DeepMarshalJSON(&buffer, envelope)
+		// Expect(err).NotTo(HaveOccurred())
+		//
+		// var expectedBuffer bytes.Buffer
+		// err = protolator.DeepMarshalJSON(&expectedBuffer, &expectedEnvelope)
+		// Expect(err).NotTo(HaveOccurred())
+		// Expect(buffer).To(Equal(expectedBuffer))
+		//
 	})
-
 })
+
+func createStandardPolicies() map[string]*config.Policy {
+	return map[string]*config.Policy{
+		config.ReadersPolicyKey: {
+			Type: "ImplicitMeta",
+			Rule: "ANY Readers",
+		},
+		config.WritersPolicyKey: {
+			Type: "ImplicitMeta",
+			Rule: "ANY Writers",
+		},
+		config.AdminsPolicyKey: {
+			Type: "ImplicitMeta",
+			Rule: "MAJORITY Admins",
+		},
+		config.LifecycleEndorsementPolicyKey: {
+			Type: "ImplicitMeta",
+			Rule: "MAJORITY Endorsement",
+		},
+		config.EndorsementPolicyKey: {
+			Type: "ImplicitMeta",
+			Rule: "MAJORITY Endorsement",
+		},
+	}
+}
+
+func createOrgStandardPolicies() map[string]*config.Policy {
+	return map[string]*config.Policy{
+		config.ReadersPolicyKey: {
+			Type: "ImplicitMeta",
+			Rule: "ANY Readers",
+		},
+		config.WritersPolicyKey: {
+			Type: "ImplicitMeta",
+			Rule: "ANY Writers",
+		},
+		config.AdminsPolicyKey: {
+			Type: "ImplicitMeta",
+			Rule: "MAJORITY Admins",
+		},
+		config.EndorsementPolicyKey: {
+			Type: "ImplicitMeta",
+			Rule: "MAJORITY Endorsement",
+		},
+	}
+}

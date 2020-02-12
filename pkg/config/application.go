@@ -74,7 +74,7 @@ func newApplicationOrgGroup(conf *Organization, mspConfig *msp.MSPConfig) (*comm
 		return nil, fmt.Errorf("error adding policies to application org group %s: %v", conf.Name, err)
 	}
 
-	addValue(applicationOrgGroup, MSPValue(mspConfig), AdminsPolicyKey)
+	addValue(applicationOrgGroup, mspValue(mspConfig), AdminsPolicyKey)
 
 	var anchorProtos []*pb.AnchorPeer
 	for _, anchorPeer := range conf.AnchorPeers {

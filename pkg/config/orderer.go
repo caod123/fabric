@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package config
 
 import (
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"time"
@@ -66,6 +67,9 @@ func NewOrdererGroup(conf *Orderer, mspConfig *msp.MSPConfig) (*common.ConfigGro
 	case ConsensusTypeKafka:
 		addValue(ordererGroup, kafkaBrokersValue(conf.Kafka.Brokers), AdminsPolicyKey)
 	case ConsensusTypeEtcdRaft:
+		if conf.EtcdRaft == nil {
+			return nil, errors.New("EtcdRaft not set for consensus type etcdraft")
+		}
 		if consensusMetadata, err = marshalEtcdRaftMetadata(conf.EtcdRaft); err != nil {
 			return nil, fmt.Errorf("cannot marshal metadata for orderer type %s: %v", ConsensusTypeEtcdRaft, err)
 		}
@@ -101,7 +105,7 @@ func newOrdererOrgGroup(conf *Organization, mspConfig *msp.MSPConfig) (*common.C
 		return nil, fmt.Errorf("error adding policies to orderer org group %s: %v", conf.Name, err)
 	}
 
-	addValue(ordererOrgGroup, MSPValue(mspConfig), AdminsPolicyKey)
+	addValue(ordererOrgGroup, mspValue(mspConfig), AdminsPolicyKey)
 
 	if len(conf.OrdererEndpoints) > 0 {
 		addValue(ordererOrgGroup, endpointsValue(conf.OrdererEndpoints), AdminsPolicyKey)

@@ -88,7 +88,7 @@ func newConsortiumOrgGroup(conf *Organization, mspConfig *msp.MSPConfig) (*commo
 		return nil, fmt.Errorf("error adding policies to consortium org group %s: %v", conf.Name, err)
 	}
 
-	addValue(consortiumOrgGroup, MSPValue(mspConfig), AdminsPolicyKey)
+	addValue(consortiumOrgGroup, mspValue(mspConfig), AdminsPolicyKey)
 
 	return consortiumOrgGroup, nil
 }
@@ -152,7 +152,7 @@ func signaturePolicy(policyName string, sigPolicy *common.SignaturePolicyEnvelop
 		key: policyName,
 		value: &common.Policy{
 			Type:  int32(common.Policy_SIGNATURE),
-			Value: marshalOrPanic(sigPolicy),
+			Value: protoMarshalOrPanic(sigPolicy),
 		},
 	}
 }

@@ -1,5 +1,5 @@
 /*
-Copyright IBM Corp. All Rights Reserved.
+Copyright IBM Corp. All Rights Reserved
 
 SPDX-License-Identifier: Apache-2.0
 */
@@ -20,22 +20,7 @@ import (
 	"github.com/hyperledger/fabric-protos-go/common"
 )
 
-// MSPConfig encapsulates configuration information for an MSP
-type MSPConfig struct {
-	Admincert                     [][]byte                 // pem encoded admin cert
-	Rootcert                      [][]byte                 // pem encoded root cert (CA)
-	IntermediateCert              [][]byte                 // pem encoded intermediates cert
-	SigningIdentity               *msp.SigningIdentityInfo // not sure what is this
-	Name                          string                   // ID, not sure which ID
-	OrganizationalUnitIdentifiers *msp.FabricOUIdentifier  // something to do with NodeOU?
-	RevocationList                [][]byte                 // pem encoded crls. what is crls?
-	CryptoConfig                  *msp.FabricCryptoConfig  // bsscp stuff. might need struct for this
-	TLSRootCerts                  [][]byte                 //pem encoded tls ca cert
-	TLSIntermediateCerts          [][]byte                 //pem encoded tls intermediate certs
-	FabricNodeOus                 *msp.FabricNodeOUs       // nodeOU stuff.
-}
-
-// Profile encapsulates basic information for a configtxgen profile.
+// Profile encapsulates basic information for a configtxgen profile
 type Profile struct {
 	Consortium   string
 	Application  *Application
@@ -59,7 +44,7 @@ type Resources struct {
 }
 
 // Organization encodes the organization-level configuration needed in
-// config transactions.
+// config transactions
 type Organization struct {
 	Name     string
 	ID       string
@@ -69,7 +54,7 @@ type Organization struct {
 
 	// Note: Viper deserialization does not seem to care for
 	// embedding of types, so we use one organization struct
-	// for both orderers and applications.
+	// for both orderers and applications
 	AnchorPeers      []*AnchorPeer
 	OrdererEndpoints []string
 
@@ -79,7 +64,7 @@ type Organization struct {
 	AdminPrincipal string
 
 	// SkipAsForeign indicates that this org definition is actually unknown to this
-	// instance of the tool, so, parsing of this org's parameters should be ignored.
+	// instance of the tool, so, parsing of this org's parameters should be ignored
 	SkipAsForeign bool
 }
 
@@ -89,15 +74,10 @@ type BatchSize struct {
 	PreferredMaxBytes uint32
 }
 
-// Kafka contains configuration for the Kafka-based orderer.
+// Kafka contains configuration for the Kafka-based orderer
 type Kafka struct {
 	Brokers []string
 }
-
-type Option func(options)
-
-// Options for extensibility
-type options struct{}
 
 // StandardConfigPolicy ...
 type StandardConfigPolicy struct {
@@ -115,9 +95,46 @@ func (scv *StandardConfigPolicy) Value() *common.Policy {
 	return scv.value
 }
 
-// marshalOrPanic serializes a protobuf message and panics if this
+// CreateChannelTx creates a create channel tx using the provided config
+func CreateChannelTx(profile *Profile, mspConfig *msp.FabricMSPConfig) (*common.Envelope, error) {
+
+	if profile == nil {
+		return nil, errors.New("failed to create channel tx because profile is empty")
+	}
+
+	channelID := profile.ChannelID
+
+	if channelID == "" {
+		return nil, errors.New("failed to create channel tx because channel ID is empty")
+	}
+
+	// mspconf defaults type to FABRIC which implements an X.509 based provider
+	mspconf := &msp.MSPConfig{
+		Config: protoMarshalOrPanic(mspConfig),
+	}
+
+	ct, err := defaultConfigTemplate(profile, mspconf)
+	if err != nil {
+		return nil, fmt.Errorf("could not generate default config template: %v", err)
+	}
+
+	newChannelConfigUpdate, err := newChannelCreateConfigUpdate(channelID, profile, ct, mspconf)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generated config update: %v", err)
+	}
+
+	newConfigUpdateEnv := &common.ConfigUpdateEnvelope{
+		ConfigUpdate: protoMarshalOrPanic(newChannelConfigUpdate),
+	}
+
+	env, err := createEnvelope(common.HeaderType_CONFIG_UPDATE, channelID, newConfigUpdateEnv)
+
+	return env, err
+}
+
+// protoMarshalOrPanic serializes a protobuf message and panics if this
 // operation fails
-func marshalOrPanic(pb proto.Message) []byte {
+func protoMarshalOrPanic(pb proto.Message) []byte {
 	data, err := proto.Marshal(pb)
 	if err != nil {
 		panic(err)
@@ -142,8 +159,8 @@ func makeChannelHeader(headerType common.HeaderType, version int32, channelID st
 // MakePayloadHeader creates a Payload Header.
 func makePayloadHeader(ch *common.ChannelHeader, sh *common.SignatureHeader) *common.Header {
 	return &common.Header{
-		ChannelHeader:   marshalOrPanic(ch),
-		SignatureHeader: marshalOrPanic(sh),
+		ChannelHeader:   protoMarshalOrPanic(ch),
+		SignatureHeader: protoMarshalOrPanic(sh),
 	}
 }
 
@@ -156,18 +173,18 @@ func newConfigGroup() *common.ConfigGroup {
 	}
 }
 
-// StandardConfigValue implements the ConfigValue interface.
+// StandardConfigValue implements the ConfigValue interface
 type StandardConfigValue struct {
 	key   string
 	value proto.Message
 }
 
-// Key is the key this value should be stored in the *common.ConfigGroup.Values map.
+// Key is the key this value should be stored in the *common.ConfigGroup.Values map
 func (scv *StandardConfigValue) Key() string {
 	return scv.key
 }
 
-// Value is the message which should be marshaled to opaque bytes for the *common.ConfigValue.value.
+// Value is the message which should be marshaled to opaque bytes for the *common.ConfigValue.value
 func (scv *StandardConfigValue) Value() proto.Message {
 	return scv.value
 }
@@ -219,10 +236,8 @@ func newChannelGroup(conf *Profile, mspConfig *msp.MSPConfig) (*common.ConfigGro
 	return channelGroup, nil
 }
 
-// Hashing
-
-// HashingAlgorithmValue returns the only currently valid hashing algorithm.
-// It is a value for the /Channel group.
+// hashingAlgorithmValue returns the only currently valid hashing algorithm
+// It is a value for the /Channel group
 func hashingAlgorithmValue() *StandardConfigValue {
 	return &StandardConfigValue{
 		key: HashingAlgorithmKey,
@@ -232,8 +247,8 @@ func hashingAlgorithmValue() *StandardConfigValue {
 	}
 }
 
-// BlockDataHashingStructureValue returns the only currently valid block data hashing structure.
-// It is a value for the /Channel group.
+// blockDataHashingStructureValue returns the only currently valid block data hashing structure
+// It is a value for the /Channel group
 func blockDataHashingStructureValue() *StandardConfigValue {
 	return &StandardConfigValue{
 		key: BlockDataHashingStructureKey,
@@ -245,12 +260,11 @@ func blockDataHashingStructureValue() *StandardConfigValue {
 
 func addValue(cg *common.ConfigGroup, value *StandardConfigValue, modPolicy string) {
 	cg.Values[value.Key()] = &common.ConfigValue{
-		Value:     marshalOrPanic(value.Value()),
+		Value:     protoMarshalOrPanic(value.Value()),
 		ModPolicy: modPolicy,
 	}
 }
 
-// AddPolicies ...
 func addPolicies(cg *common.ConfigGroup, policyMap map[string]*Policy, modPolicy string) error {
 	switch {
 	case policyMap == nil:
@@ -274,7 +288,7 @@ func addPolicies(cg *common.ConfigGroup, policyMap map[string]*Policy, modPolicy
 				ModPolicy: modPolicy,
 				Policy: &common.Policy{
 					Type:  int32(common.Policy_IMPLICIT_META),
-					Value: marshalOrPanic(imp),
+					Value: protoMarshalOrPanic(imp),
 				},
 			}
 		case SignaturePolicyType:
@@ -286,7 +300,7 @@ func addPolicies(cg *common.ConfigGroup, policyMap map[string]*Policy, modPolicy
 				ModPolicy: modPolicy,
 				Policy: &common.Policy{
 					Type:  int32(common.Policy_SIGNATURE),
-					Value: marshalOrPanic(sp),
+					Value: protoMarshalOrPanic(sp),
 				},
 			}
 		default:
@@ -296,7 +310,6 @@ func addPolicies(cg *common.ConfigGroup, policyMap map[string]*Policy, modPolicy
 	return nil
 }
 
-// ImplicitMetaFromString ...
 func implicitMetaFromString(input string) (*common.ImplicitMetaPolicy, error) {
 	args := strings.Split(input, " ")
 	if len(args) != 2 {
@@ -321,8 +334,8 @@ func implicitMetaFromString(input string) (*common.ImplicitMetaPolicy, error) {
 	return res, nil
 }
 
-// OrdererAddressesValue returns the a config definition for the orderer addresses.
-// It is a value for the /Channel group.
+// ordererAddressesValue returns the a config definition for the orderer addresses
+// It is a value for the /Channel group
 func ordererAddressesValue(addresses []string) *StandardConfigValue {
 	return &StandardConfigValue{
 		key: OrdererAddressesKey,
@@ -332,8 +345,8 @@ func ordererAddressesValue(addresses []string) *StandardConfigValue {
 	}
 }
 
-// capabilitiesValue returns the config definition for a a set of capabilities.
-// It is a value for the /Channel/Orderer, Channel/Application/, and /Channel groups.
+// capabilitiesValue returns the config definition for a a set of capabilities
+// It is a value for the /Channel/Orderer, Channel/Application/, and /Channel groups
 func capabilitiesValue(capabilities map[string]bool) *StandardConfigValue {
 	c := &common.Capabilities{
 		Capabilities: make(map[string]*common.Capability),
@@ -352,9 +365,9 @@ func capabilitiesValue(capabilities map[string]bool) *StandardConfigValue {
 	}
 }
 
-// MSPValue returns the config definition for an MSP.
-// It is a value for the /Channel/Orderer/*, /Channel/Application/*, and /Channel/Consortiums/*/*/* groups.
-func MSPValue(mspDef *msp.MSPConfig) *StandardConfigValue {
+// mspValue returns the config definition for an MSP
+// It is a value for the /Channel/Orderer/*, /Channel/Application/*, and /Channel/Consortiums/*/*/* groups
+func mspValue(mspDef *msp.MSPConfig) *StandardConfigValue {
 	return &StandardConfigValue{
 		key:   MSPKey,
 		value: mspDef,
@@ -364,14 +377,14 @@ func MSPValue(mspDef *msp.MSPConfig) *StandardConfigValue {
 func makeImplicitMetaPolicy(subPolicyName string, rule common.ImplicitMetaPolicy_Rule) *common.Policy {
 	return &common.Policy{
 		Type: int32(common.Policy_IMPLICIT_META),
-		Value: marshalOrPanic(&common.ImplicitMetaPolicy{
+		Value: protoMarshalOrPanic(&common.ImplicitMetaPolicy{
 			Rule:      rule,
 			SubPolicy: subPolicyName,
 		}),
 	}
 }
 
-// ImplicitMetaAnyPolicy defines an implicit meta policy whose sub_policy and key is policyname with rule ANY.
+// implicitMetaAnyPolicy defines an implicit meta policy whose sub_policy and key is policyname with rule ANY
 func implicitMetaAnyPolicy(policyName string) *StandardConfigPolicy {
 	return &StandardConfigPolicy{
 		key:   policyName,
@@ -379,9 +392,9 @@ func implicitMetaAnyPolicy(policyName string) *StandardConfigPolicy {
 	}
 }
 
-// DefaultConfigTemplate generates a config template based on the assumption that
+// defaultConfigTemplate generates a config template based on the assumption that
 // the input profile is a channel creation template and no system channel context
-// is available.
+// is available
 func defaultConfigTemplate(conf *Profile, mspConfig *msp.MSPConfig) (*common.ConfigGroup, error) {
 	channelGroup, err := newChannelGroup(conf, mspConfig)
 	if err != nil {
@@ -398,17 +411,10 @@ func defaultConfigTemplate(conf *Profile, mspConfig *msp.MSPConfig) (*common.Con
 	return channelGroup, nil
 }
 
-// NewChannelCreateConfigUpdate generates a ConfigUpdate which can be sent to the orderer to create a new channel.  Optionally, the channel group of the
-// ordering system channel may be passed in, and the resulting ConfigUpdate will extract the appropriate versions from this file.
+// NewChannelCreateConfigUpdate generates a ConfigUpdate which can be sent to the orderer to create a new channel
+// Optionally, the channel group of the ordering system channel may be passed in, and the resulting ConfigUpdate
+// will extract the appropriate versions from this file
 func newChannelCreateConfigUpdate(channelID string, conf *Profile, templateConfig *common.ConfigGroup, mspConfig *msp.MSPConfig) (*common.ConfigUpdate, error) {
-	if conf.Application == nil {
-		return nil, errors.New("cannot define a new channel with no Application section")
-	}
-
-	if conf.Consortium == "" {
-		return nil, errors.New("cannot define a new channel with no Consortium value")
-	}
-
 	newChannelGroup, err := newChannelGroup(conf, mspConfig)
 	if err != nil {
 		return nil, fmt.Errorf("could not turn parse profile into channel group %v", err)
@@ -419,12 +425,12 @@ func newChannelCreateConfigUpdate(channelID string, conf *Profile, templateConfi
 		return nil, fmt.Errorf("could not compute update %v", err)
 	}
 
-	// Add the consortium name to create the channel for into the write set as required.
+	// Add the consortium name to create the channel for into the write set as required
 	updt.ChannelId = channelID
 	updt.ReadSet.Values[ConsortiumKey] = &common.ConfigValue{Version: 0}
 	updt.WriteSet.Values[ConsortiumKey] = &common.ConfigValue{
 		Version: 0,
-		Value: marshalOrPanic(&common.Consortium{
+		Value: protoMarshalOrPanic(&common.Consortium{
 			Name: conf.Consortium,
 		}),
 	}
@@ -433,13 +439,11 @@ func newChannelCreateConfigUpdate(channelID string, conf *Profile, templateConfi
 }
 
 // CreateEnvelope creates an unsigned envelope of type txType using with the marshalled
-// proto message
+// common.ConfigGroupEnvelope proto message
 func createEnvelope(
 	txType common.HeaderType,
 	channelID string,
 	dataMsg proto.Message,
-	msgVersion int32,
-	epoch uint64,
 ) (*common.Envelope, error) {
 
 	payloadChannelHeader := makeChannelHeader(txType, msgVersion, channelID, epoch)
@@ -450,7 +454,7 @@ func createEnvelope(
 		return nil, fmt.Errorf("failed marshalling %v", err)
 	}
 
-	paylBytes := marshalOrPanic(
+	paylBytes := protoMarshalOrPanic(
 		&common.Payload{
 			Header: makePayloadHeader(payloadChannelHeader, payloadSignatureHeader),
 			Data:   data,
@@ -462,54 +466,4 @@ func createEnvelope(
 	}
 
 	return env, nil
-}
-
-// CreateChannelTx creates a channel using the provided config with no base profile
-func CreateChannelTx(profile *Profile, mspConfig *MSPConfig, options ...Option) (*common.Envelope, error) {
-
-	if profile == nil {
-		return nil, errors.New("failed to create channel tx because profile is empty")
-	}
-
-	channelID := profile.ChannelID
-
-	if channelID == "" {
-		return nil, errors.New("failed to create channel tx because channel ID is empty")
-	}
-
-	fmspconf := &msp.FabricMSPConfig{
-		Admins:                        mspConfig.Admincert,
-		RootCerts:                     mspConfig.Rootcert,
-		IntermediateCerts:             mspConfig.IntermediateCert,
-		SigningIdentity:               mspConfig.SigningIdentity,
-		Name:                          mspConfig.Name,
-		OrganizationalUnitIdentifiers: []*msp.FabricOUIdentifier{mspConfig.OrganizationalUnitIdentifiers},
-		RevocationList:                mspConfig.RevocationList,
-		CryptoConfig:                  mspConfig.CryptoConfig,
-		TlsRootCerts:                  mspConfig.TLSRootCerts,
-		TlsIntermediateCerts:          mspConfig.TLSIntermediateCerts,
-		FabricNodeOus:                 mspConfig.FabricNodeOus,
-	}
-
-	fmpsjs, _ := proto.Marshal(fmspconf)
-	mspconf := &msp.MSPConfig{Config: fmpsjs, Type: 0} //Type 0 : FABRIC
-
-	ct, err := defaultConfigTemplate(profile, mspconf)
-	if err != nil {
-		return nil, fmt.Errorf("could not generate default config template: %v", err)
-	}
-
-	newChannelConfigUpdate, err := newChannelCreateConfigUpdate(channelID, profile, ct, mspconf)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generated config update: %v", err)
-	}
-
-	newConfigUpdateEnv := &common.ConfigUpdateEnvelope{
-		ConfigUpdate: marshalOrPanic(newChannelConfigUpdate),
-	}
-
-	env, err := createEnvelope(common.HeaderType_CONFIG_UPDATE, channelID, newConfigUpdateEnv, msgVersion, epoch)
-
-	return env, err
-
 }

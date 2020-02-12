@@ -4,70 +4,23 @@ Copyright IBM Corp All Rights Reserved.
 SPDX-License-Identifier: Apache-2.0
 */
 
-package config
+package config_test
 
 import (
 	"io/ioutil"
 	"os"
 
+	"github.com/hyperledger/fabric-protos-go/msp"
+	"github.com/hyperledger/fabric/pkg/config"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 )
 
-// Question: Put these test helper functions in separate file?
-func CreateStandardPolicies() map[string]*Policy {
-	return map[string]*Policy{
-		"Readers": {
-			Type: "ImplicitMeta",
-			Rule: "ANY Readers",
-		},
-		"Writers": {
-			Type: "ImplicitMeta",
-			Rule: "ANY Writers",
-		},
-		"Admins": {
-			Type: "ImplicitMeta",
-			Rule: "MAJORITY Admins",
-		},
-		"LifecycleEndorsement": {
-			Type: "ImplicitMeta",
-			Rule: "MAJORITY Endorsement",
-		},
-		"Endorsement": {
-			Type: "ImplicitMeta",
-			Rule: "MAJORITY Endorsement",
-		},
-	}
-}
-
-// Question: Put these test helper functions in separate file?
-func CreateOrgStandardPolicies() map[string]*Policy {
-	return map[string]*Policy{
-		"Readers": {
-			Type: "ImplicitMeta",
-			Rule: "ANY Readers",
-		},
-		"Writers": {
-			Type: "ImplicitMeta",
-			Rule: "ANY Writers",
-		},
-		"Admins": {
-			Type: "ImplicitMeta",
-			Rule: "MAJORITY Admins",
-		},
-		"Endorsement": {
-			Type: "ImplicitMeta",
-			Rule: "ANY Endorsement",
-		},
-	}
-}
-
 var _ = Describe("CreateChannelTx", func() {
-
 	var (
 		testDir   string
-		profile   *Profile
-		mspConfig *MSPConfig
+		profile   *config.Profile
+		mspConfig *msp.FabricMSPConfig
 	)
 
 	BeforeEach(func() {
@@ -75,22 +28,22 @@ var _ = Describe("CreateChannelTx", func() {
 		testDir, err = ioutil.TempDir("", "config")
 		Expect(err).NotTo(HaveOccurred())
 
-		profile = &Profile{
+		profile = &config.Profile{
 			ChannelID:  "testchannel",
 			Consortium: "SampleConsortium",
-			Application: &Application{
-				Policies: CreateStandardPolicies(),
-				Organizations: []*Organization{
-					&Organization{
+			Application: &config.Application{
+				Policies: createStandardPolicies(),
+				Organizations: []*config.Organization{
+					&config.Organization{
 						Name:     "Org1",
 						ID:       "Org1MSP",
-						Policies: CreateOrgStandardPolicies(),
+						Policies: createOrgStandardPolicies(),
 						MSPType:  "bccsp",
 					},
-					&Organization{
+					&config.Organization{
 						Name:     "Org2",
 						ID:       "Org2MSP",
-						Policies: CreateOrgStandardPolicies(),
+						Policies: createOrgStandardPolicies(),
 						MSPType:  "bccsp",
 					},
 				},
@@ -99,13 +52,32 @@ var _ = Describe("CreateChannelTx", func() {
 				},
 			},
 			Capabilities: map[string]bool{"V2_0": true},
-			Policies:     CreateStandardPolicies(),
+			Policies:     createStandardPolicies(),
 		}
-		mspConfig = &MSPConfig{}
+
+		mspConfig = &msp.FabricMSPConfig{}
 	})
 
 	AfterEach(func() {
 		os.RemoveAll(testDir)
+	})
+
+	It("returns an envelope", func() {
+		env, err := config.CreateChannelTx(profile, mspConfig)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(env).NotTo(BeNil())
+	})
+
+	When("creating the default config template fails", func() {
+		BeforeEach(func() {
+			profile.Policies = nil
+		})
+
+		It("returns an error", func() {
+			env, err := config.CreateChannelTx(profile, mspConfig)
+			Expect(env).To(BeNil())
+			Expect(err).To(MatchError("could not generate default config template: error adding policies to channel group: no policies defined"))
+		})
 	})
 
 	When("channel is not specified in config", func() {
@@ -114,12 +86,10 @@ var _ = Describe("CreateChannelTx", func() {
 		})
 
 		It("returns an error", func() {
-			blk, err := CreateChannelTx(profile, mspConfig)
-			Expect(err).To(HaveOccurred())
-			Expect(blk).To(BeNil())
+			env, err := config.CreateChannelTx(profile, mspConfig)
+			Expect(env).To(BeNil())
 			Expect(err).To(MatchError("failed to create channel tx because profile is empty"))
 		})
-
 	})
 
 	When("channel ID is not specified in config", func() {
@@ -128,28 +98,70 @@ var _ = Describe("CreateChannelTx", func() {
 		})
 
 		It("returns an error", func() {
-			blk, err := CreateChannelTx(profile, mspConfig)
-			Expect(err).To(HaveOccurred())
-			Expect(blk).To(BeNil())
+			env, err := config.CreateChannelTx(profile, mspConfig)
+			Expect(env).To(BeNil())
 			Expect(err).To(MatchError("failed to create channel tx because channel ID is empty"))
 		})
 	})
 
 	When("generating config template", func() {
-
 		When("policy is empty", func() {
-
 			BeforeEach(func() {
 				profile.Policies = nil
 			})
 
 			It("returns an error", func() {
-				blk, err := CreateChannelTx(profile, mspConfig)
+				env, err := config.CreateChannelTx(profile, mspConfig)
 				Expect(err).To(HaveOccurred())
-				Expect(blk).To(BeNil())
+				Expect(env).To(BeNil())
 				Expect(err).To(MatchError("could not generate default config template: error adding policies to channel group: no policies defined"))
 			})
 		})
 	})
-
 })
+
+func createStandardPolicies() map[string]*config.Policy {
+	return map[string]*config.Policy{
+		config.ReadersPolicyKey: {
+			Type: config.ImplicitMetaPolicyType,
+			Rule: "ANY Readers",
+		},
+		config.WritersPolicyKey: {
+			Type: config.ImplicitMetaPolicyType,
+			Rule: "ANY Writers",
+		},
+		config.AdminsPolicyKey: {
+			Type: config.ImplicitMetaPolicyType,
+			Rule: "MAJORITY Admins",
+		},
+		config.LifecycleEndorsementPolicyKey: {
+			Type: config.ImplicitMetaPolicyType,
+			Rule: "MAJORITY Endorsement",
+		},
+		config.EndorsementPolicyKey: {
+			Type: config.ImplicitMetaPolicyType,
+			Rule: "MAJORITY Endorsement",
+		},
+	}
+}
+
+func createOrgStandardPolicies() map[string]*config.Policy {
+	return map[string]*config.Policy{
+		config.ReadersPolicyKey: {
+			Type: config.ImplicitMetaPolicyType,
+			Rule: "ANY Readers",
+		},
+		config.WritersPolicyKey: {
+			Type: config.ImplicitMetaPolicyType,
+			Rule: "ANY Writers",
+		},
+		config.AdminsPolicyKey: {
+			Type: config.ImplicitMetaPolicyType,
+			Rule: "MAJORITY Admins",
+		},
+		config.EndorsementPolicyKey: {
+			Type: config.ImplicitMetaPolicyType,
+			Rule: "ANY Endorsement",
+		},
+	}
+}

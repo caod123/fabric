@@ -4,7 +4,7 @@ Copyright IBM Corp All Rights Reserved.
 SPDX-License-Identifier: Apache-2.0
 */
 
-package config
+package config_test
 
 import (
 	"encoding/json"
@@ -46,5 +46,5 @@ var _ = SynchronizedAfterSuite(func() {
 })
 
 func StartPort() int {
-	return integration.E2EBasePort.StartPortForNode()
+	return integration.ConfigBasePort.StartPortForNode()
 }
