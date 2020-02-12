@@ -125,13 +125,8 @@ func marshalOrPanic(pb proto.Message) []byte {
 	return data
 }
 
-// Marshal serializes a protobuf message.
-func Marshal(pb proto.Message) ([]byte, error) {
-	return proto.Marshal(pb)
-}
-
 // MakeChannelHeader creates a ChannelHeader.
-func MakeChannelHeader(headerType common.HeaderType, version int32, channelID string, epoch uint64) *common.ChannelHeader {
+func makeChannelHeader(headerType common.HeaderType, version int32, channelID string, epoch uint64) *common.ChannelHeader {
 	return &common.ChannelHeader{
 		Type:    int32(headerType),
 		Version: version,
@@ -145,15 +140,15 @@ func MakeChannelHeader(headerType common.HeaderType, version int32, channelID st
 }
 
 // MakePayloadHeader creates a Payload Header.
-func MakePayloadHeader(ch *common.ChannelHeader, sh *common.SignatureHeader) *common.Header {
+func makePayloadHeader(ch *common.ChannelHeader, sh *common.SignatureHeader) *common.Header {
 	return &common.Header{
 		ChannelHeader:   marshalOrPanic(ch),
 		SignatureHeader: marshalOrPanic(sh),
 	}
 }
 
-// NewConfigGroup ...
-func NewConfigGroup() *common.ConfigGroup {
+// newConfigGroup ...
+func newConfigGroup() *common.ConfigGroup {
 	return &common.ConfigGroup{
 		Groups:   make(map[string]*common.ConfigGroup),
 		Values:   make(map[string]*common.ConfigValue),
@@ -179,7 +174,7 @@ func (scv *StandardConfigValue) Value() proto.Message {
 
 // newChannelGroup defines the root of the channel configuration
 func newChannelGroup(conf *Profile, mspConfig *msp.MSPConfig) (*common.ConfigGroup, error) {
-	channelGroup := NewConfigGroup()
+	channelGroup := newConfigGroup()
 	if err := addPolicies(channelGroup, conf.Policies, AdminsPolicyKey); err != nil {
 		return nil, fmt.Errorf("error adding policies to channel group: %v", err)
 	}
@@ -187,7 +182,7 @@ func newChannelGroup(conf *Profile, mspConfig *msp.MSPConfig) (*common.ConfigGro
 	addValue(channelGroup, hashingAlgorithmValue(), AdminsPolicyKey)
 	addValue(channelGroup, blockDataHashingStructureValue(), AdminsPolicyKey)
 	if conf.Orderer != nil && len(conf.Orderer.Addresses) > 0 {
-		addValue(channelGroup, OrdererAddressesValue(conf.Orderer.Addresses), ordererAdminsPolicyName)
+		addValue(channelGroup, ordererAddressesValue(conf.Orderer.Addresses), ordererAdminsPolicyName)
 	}
 
 	if conf.Consortium != "" {
@@ -328,7 +323,7 @@ func implicitMetaFromString(input string) (*common.ImplicitMetaPolicy, error) {
 
 // OrdererAddressesValue returns the a config definition for the orderer addresses.
 // It is a value for the /Channel group.
-func OrdererAddressesValue(addresses []string) *StandardConfigValue {
+func ordererAddressesValue(addresses []string) *StandardConfigValue {
 	return &StandardConfigValue{
 		key: OrdererAddressesKey,
 		value: &common.OrdererAddresses{
@@ -373,17 +368,6 @@ func makeImplicitMetaPolicy(subPolicyName string, rule common.ImplicitMetaPolicy
 			Rule:      rule,
 			SubPolicy: subPolicyName,
 		}),
-	}
-}
-
-// SignaturePolicy defines a policy with key policyName and the given signature policy.
-func SignaturePolicy(policyName string, sigPolicy *common.SignaturePolicyEnvelope) *StandardConfigPolicy {
-	return &StandardConfigPolicy{
-		key: policyName,
-		value: &common.Policy{
-			Type:  int32(common.Policy_SIGNATURE),
-			Value: marshalOrPanic(sigPolicy),
-		},
 	}
 }
 
@@ -458,17 +442,17 @@ func createEnvelope(
 	epoch uint64,
 ) (*common.Envelope, error) {
 
-	payloadChannelHeader := MakeChannelHeader(txType, msgVersion, channelID, epoch)
+	payloadChannelHeader := makeChannelHeader(txType, msgVersion, channelID, epoch)
 	payloadSignatureHeader := &common.SignatureHeader{}
 
 	data, err := proto.Marshal(dataMsg)
 	if err != nil {
-		return nil, fmt.Errorf("error marshaling %v", err)
+		return nil, fmt.Errorf("failed marshalling %v", err)
 	}
 
 	paylBytes := marshalOrPanic(
 		&common.Payload{
-			Header: MakePayloadHeader(payloadChannelHeader, payloadSignatureHeader),
+			Header: makePayloadHeader(payloadChannelHeader, payloadSignatureHeader),
 			Data:   data,
 		},
 	)
@@ -517,7 +501,7 @@ func CreateChannelTx(profile *Profile, mspConfig *MSPConfig, options ...Option) 
 
 	newChannelConfigUpdate, err := newChannelCreateConfigUpdate(channelID, profile, ct, mspconf)
 	if err != nil {
-		return nil, fmt.Errorf("config update generation failure: %v", err)
+		return nil, fmt.Errorf("failed to generated config update: %v", err)
 	}
 
 	newConfigUpdateEnv := &common.ConfigUpdateEnvelope{

@@ -151,4 +151,5 @@ var _ = Describe("CreateChannelTx", func() {
 			})
 		})
 	})
+
 })

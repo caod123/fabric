@@ -136,7 +136,7 @@ func computeGroupsMapUpdate(original, updated map[string]*cb.ConfigGroup) (readS
 			continue
 		}
 		updatedMembers = true
-		_, groupWriteSet, _ := computeGroupUpdate(NewConfigGroup(), updatedGroup)
+		_, groupWriteSet, _ := computeGroupUpdate(newConfigGroup(), updatedGroup)
 		writeSet[groupName] = &cb.ConfigGroup{
 			Version:   0,
 			ModPolicy: updatedGroup.ModPolicy,

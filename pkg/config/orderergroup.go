@@ -38,7 +38,7 @@ type Orderer struct {
 // about how large blocks should be, how frequently they should be emitted, etc. as well as the organizations of the ordering network.
 // It sets the mod_policy of all elements to "Admins".  This group is always present in any channel configuration.
 func NewOrdererGroup(conf *Orderer, mspConfig *msp.MSPConfig) (*common.ConfigGroup, error) {
-	ordererGroup := NewConfigGroup()
+	ordererGroup := newConfigGroup()
 	if err := addPolicies(ordererGroup, conf.Policies, AdminsPolicyKey); err != nil {
 		return nil, fmt.Errorf("error adding policies to orderer group: %v", err)
 	}
@@ -90,7 +90,7 @@ func NewOrdererGroup(conf *Orderer, mspConfig *msp.MSPConfig) (*common.ConfigGro
 // NewOrdererOrgGroup returns an orderer org component of the channel configuration.  It defines the crypto material for the
 // organization (its MSP).  It sets the mod_policy of all elements to "Admins".
 func newOrdererOrgGroup(conf *Organization, mspConfig *msp.MSPConfig) (*common.ConfigGroup, error) {
-	ordererOrgGroup := NewConfigGroup()
+	ordererOrgGroup := newConfigGroup()
 	ordererOrgGroup.ModPolicy = AdminsPolicyKey
 
 	if conf.SkipAsForeign {

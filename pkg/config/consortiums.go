@@ -22,7 +22,7 @@ type Consortium struct {
 	Organizations []*Organization
 }
 
-// ConfigPolicy ...
+// ConfigPolicy defines a common representation for different ConfigPolicy values
 type ConfigPolicy interface {
 	// Key is the key this value should be stored in the *common.ConfigGroup.Policies map.
 	Key() string
@@ -36,13 +36,13 @@ type ConfigPolicy interface {
 // NewConsortiumsGroup returns the consortiums component of the channel configuration.  This element is only defined for the ordering system channel.
 // It sets the mod_policy for all elements to "/Channel/Orderer/Admins".
 func NewConsortiumsGroup(conf map[string]*Consortium, mspConfig *msp.MSPConfig) (*common.ConfigGroup, error) {
-	consortiumsGroup := NewConfigGroup()
+	consortiumsGroup := newConfigGroup()
 
 	// QUESTION: How should we set this? the original impl did it globally...
 	AcceptAllPolicy = envelope(nOutOf(0, []*common.SignaturePolicy{}), [][]byte{})
 	// This policy is not referenced anywhere, it is only used as part of the implicit meta policy rule at the channel level, so this setting
 	// effectively degrades control of the ordering system channel to the ordering admins
-	addPolicy(consortiumsGroup, SignaturePolicy(AdminsPolicyKey, AcceptAllPolicy), ordererAdminsPolicyName)
+	addPolicy(consortiumsGroup, signaturePolicy(AdminsPolicyKey, AcceptAllPolicy), ordererAdminsPolicyName)
 
 	for consortiumName, consortium := range conf {
 		var err error
@@ -56,9 +56,9 @@ func NewConsortiumsGroup(conf map[string]*Consortium, mspConfig *msp.MSPConfig) 
 	return consortiumsGroup, nil
 }
 
-// NewConsortiumGroup ...
+// NewConsortiumGroup returns a consortiums component of the channel configuration.
 func newConsortiumGroup(conf *Consortium, mspConfig *msp.MSPConfig) (*common.ConfigGroup, error) {
-	consortiumGroup := NewConfigGroup()
+	consortiumGroup := newConfigGroup()
 
 	for _, org := range conf.Organizations {
 		var err error
@@ -77,7 +77,7 @@ func newConsortiumGroup(conf *Consortium, mspConfig *msp.MSPConfig) (*common.Con
 // NewConsortiumOrgGroup returns an org component of the channel configuration.  It defines the crypto material for the
 // organization (its MSP).  It sets the mod_policy of all elements to "Admins".
 func newConsortiumOrgGroup(conf *Organization, mspConfig *msp.MSPConfig) (*common.ConfigGroup, error) {
-	consortiumOrgGroup := NewConfigGroup()
+	consortiumOrgGroup := newConfigGroup()
 	consortiumOrgGroup.ModPolicy = AdminsPolicyKey
 
 	if conf.SkipAsForeign {
@@ -143,5 +143,16 @@ func addPolicy(cg *common.ConfigGroup, policy ConfigPolicy, modPolicy string) {
 	cg.Policies[policy.Key()] = &common.ConfigPolicy{
 		Policy:    policy.Value(),
 		ModPolicy: modPolicy,
+	}
+}
+
+// SignaturePolicy defines a policy with key policyName and the given signature policy.
+func signaturePolicy(policyName string, sigPolicy *common.SignaturePolicyEnvelope) *StandardConfigPolicy {
+	return &StandardConfigPolicy{
+		key: policyName,
+		value: &common.Policy{
+			Type:  int32(common.Policy_SIGNATURE),
+			Value: marshalOrPanic(sigPolicy),
+		},
 	}
 }

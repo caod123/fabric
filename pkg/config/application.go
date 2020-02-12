@@ -35,7 +35,7 @@ type AnchorPeer struct {
 // NewApplicationGroup returns the application component of the channel configuration.  It defines the organizations which are involved
 // in application logic like chaincodes, and how these members may interact with the orderer.  It sets the mod_policy of all elements to "Admins".
 func NewApplicationGroup(conf *Application, mspConfig *msp.MSPConfig) (*common.ConfigGroup, error) {
-	applicationGroup := NewConfigGroup()
+	applicationGroup := newConfigGroup()
 	if err := addPolicies(applicationGroup, conf.Policies, AdminsPolicyKey); err != nil {
 		return nil, fmt.Errorf("error adding policies to application group: %v", err)
 	}
@@ -63,7 +63,7 @@ func NewApplicationGroup(conf *Application, mspConfig *msp.MSPConfig) (*common.C
 // NewApplicationOrgGroup returns an application org component of the channel configuration.  It defines the crypto material for the organization
 // (its MSP) as well as its anchor peers for use by the gossip network.  It sets the mod_policy of all elements to "Admins".
 func newApplicationOrgGroup(conf *Organization, mspConfig *msp.MSPConfig) (*common.ConfigGroup, error) {
-	applicationOrgGroup := NewConfigGroup()
+	applicationOrgGroup := newConfigGroup()
 	applicationOrgGroup.ModPolicy = AdminsPolicyKey
 
 	if conf.SkipAsForeign {
