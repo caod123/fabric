@@ -107,6 +107,10 @@ type OUIdentifier struct {
 	OrganizationalUnitIdentifier string
 }
 
+func (o *OUIdentifier) String() string {
+	return o.OrganizationalUnitIdentifier
+}
+
 // From this point on, there are interfaces that are shared within the peer and client API
 // of the membership service provider.
 
