@@ -64,13 +64,20 @@ var _ = Describe("ChannelParticipation", func() {
 		BeforeEach(func() {
 			raftConfig := nwo.BasicEtcdRaft()
 			network = nwo.New(raftConfig, testDir, client, StartPort(), components)
+
 			network.ChannelParticipationEnabled = true
+			fileRepoDir := filepath.Join(testDir, "filerepo")
+			network.ChannelParticipationFileRepoDir = fileRepoDir
+			err := os.MkdirAll(fileRepoDir, 0755)
+			Expect(err).NotTo(HaveOccurred())
+
 			network.GenerateConfigTree()
 
 			orderer := network.Orderer("orderer")
 			ordererConfig := network.ReadOrdererConfig(orderer)
 			ordererConfig.General.BootstrapMethod = "none"
 			network.WriteOrdererConfig(orderer, ordererConfig)
+
 			network.Bootstrap()
 
 			ordererRunner = network.OrdererRunner(orderer)

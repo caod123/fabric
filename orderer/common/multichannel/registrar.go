@@ -11,6 +11,7 @@ package multichannel
 
 import (
 	"fmt"
+	"path/filepath"
 	"sync"
 
 	cb "github.com/hyperledger/fabric-protos-go/common"
@@ -23,6 +24,7 @@ import (
 	"github.com/hyperledger/fabric/common/metrics"
 	"github.com/hyperledger/fabric/internal/pkg/identity"
 	"github.com/hyperledger/fabric/orderer/common/blockcutter"
+	"github.com/hyperledger/fabric/orderer/common/filerepo"
 	"github.com/hyperledger/fabric/orderer/common/localconfig"
 	"github.com/hyperledger/fabric/orderer/common/msgprocessor"
 	"github.com/hyperledger/fabric/orderer/common/types"
@@ -108,6 +110,8 @@ type Registrar struct {
 	templator          msgprocessor.ChannelConfigTemplator
 	callbacks          []channelconfig.BundleActor
 	bccsp              bccsp.BCCSP
+
+	joinBlockFileRepo *filerepo.Repo
 }
 
 // ConfigBlock retrieves the last configuration block from the given ledger.
@@ -236,6 +240,19 @@ func (r *Registrar) Initialize(consenters map[string]consensus.Consenter) {
 		if _, etcdRaftFound := r.consenters["etcdraft"]; !etcdRaftFound {
 			logger.Panicf("Error initializing without a system channel: failed to find an etcdraft consenter")
 		}
+	}
+
+	if r.config.ChannelParticipation.Enabled {
+		// Initialize channel-participation API file repos
+		fileRepoDir := filepath.Join(r.config.FileLedger.Location, "filerepo")
+		logger.Infof("Channel Participation API enabled, registrar initializing with file repo %s", fileRepoDir)
+
+		joinBlockFileRepo, err := filerepo.New(fileRepoDir, "joinblock")
+		if err != nil {
+			logger.Panicf("Error initializing join block file repo: %s", err)
+		}
+
+		r.joinBlockFileRepo = joinBlockFileRepo
 	}
 }
 

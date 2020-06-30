@@ -94,6 +94,7 @@ var _ = Describe("EndToEnd", func() {
 			network.MetricsProvider = "statsd"
 			network.StatsdEndpoint = metricsReader.Address()
 			network.ChannelParticipationEnabled = true
+
 			network.Profiles = append(network.Profiles, &nwo.Profile{
 				Name:          "TwoOrgsBaseProfileChannel",
 				Consortium:    "SampleConsortium",
@@ -119,6 +120,7 @@ var _ = Describe("EndToEnd", func() {
 				core.VM = nil
 				network.WritePeerConfig(peer, core)
 			}
+
 			network.Bootstrap()
 
 			networkRunner := network.NetworkGroupRunner()
@@ -213,7 +215,13 @@ var _ = Describe("EndToEnd", func() {
 		BeforeEach(func() {
 			network = nwo.New(nwo.BasicKafka(), testDir, client, StartPort(), components)
 			network.MetricsProvider = "prometheus"
+
 			network.ChannelParticipationEnabled = true
+			fileRepoDir := filepath.Join(testDir, "filerepo")
+			network.ChannelParticipationFileRepoDir = fileRepoDir
+			err := os.MkdirAll(fileRepoDir, 0755)
+			Expect(err).NotTo(HaveOccurred())
+
 			network.GenerateConfigTree()
 			network.Bootstrap()
 
