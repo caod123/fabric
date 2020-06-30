@@ -270,4 +270,5 @@ func TestChannelParticipationDefaults(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, cfg.ChannelParticipation.Enabled, Defaults.ChannelParticipation.Enabled)
 	assert.Equal(t, cfg.ChannelParticipation.RemoveStorage, Defaults.ChannelParticipation.RemoveStorage)
+	assert.Equal(t, cfg.ChannelParticipation.FileRepoDir, Defaults.ChannelParticipation.FileRepoDir)
 }

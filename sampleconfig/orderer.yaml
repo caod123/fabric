@@ -361,6 +361,9 @@ ChannelParticipation:
     # The maximum size of the request body when joining a channel.
     MaxRequestBodySize: 1 MB
 
+    # Defines the file repo directory where channel partipation resources are stored.
+    FileRepoDir: /var/hyperledger/production/orderer/filerepo
+
 
 ################################################################################
 #

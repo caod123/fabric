@@ -11,6 +11,7 @@ import (
 	"io/ioutil"
 	"os"
 	"path"
+	"path/filepath"
 	"testing"
 
 	"github.com/golang/protobuf/proto"
@@ -245,6 +246,110 @@ func TestNewRegistrar(t *testing.T) {
 		)
 
 		testMessageOrderAndRetrieval(confSys.Orderer.BatchSize.MaxMessageCount, "testchannelid", chainSupport, rl, t)
+	})
+}
+
+func TestNewRegistrarWithFileRepo(t *testing.T) {
+	cryptoProvider, err := sw.NewDefaultSecurityLevelWithKeystore(sw.NewDummyKeyStore())
+	assert.NoError(t, err)
+
+	consenters := make(map[string]consensus.Consenter)
+	consenters["etcdraft"] = &mockConsenter{}
+
+	t.Run("Correct flow with valid file repo dir", func(t *testing.T) {
+		tmpdir, err := ioutil.TempDir("", "registrar_test-")
+		require.NoError(t, err)
+		defer os.RemoveAll(tmpdir)
+
+		lf, err := fileledger.New(tmpdir, &disabled.Provider{})
+		require.NoError(t, err)
+
+		fileRepoDir := filepath.Join(tmpdir, "filerepo")
+		err = os.MkdirAll(fileRepoDir, 0700)
+		require.NoError(t, err)
+
+		var manager *Registrar
+		assert.NotPanics(t, func() {
+			manager = NewRegistrar(localconfig.TopLevel{
+				ChannelParticipation: localconfig.ChannelParticipation{
+					Enabled:     true,
+					FileRepoDir: fileRepoDir,
+				},
+			}, lf, mockCrypto(), &disabled.Provider{}, cryptoProvider)
+			manager.Initialize(consenters)
+		}, "Should not panic when file repo dir exists and is read writable")
+		require.NotNil(t, manager)
+		require.NotNil(t, manager.joinBlockFileRepo)
+	})
+
+	t.Run("File repo dir does not exist", func(t *testing.T) {
+		tmpdir, err := ioutil.TempDir("", "registrar_test-")
+		require.NoError(t, err)
+		defer os.RemoveAll(tmpdir)
+
+		lf, err := fileledger.New(tmpdir, &disabled.Provider{})
+		require.NoError(t, err)
+
+		fileRepoDir := filepath.Join(tmpdir, "filerepo")
+
+		var manager *Registrar
+		assert.Panics(t, func() {
+			manager = NewRegistrar(localconfig.TopLevel{
+				ChannelParticipation: localconfig.ChannelParticipation{
+					Enabled:     true,
+					FileRepoDir: fileRepoDir,
+				},
+			}, lf, mockCrypto(), &disabled.Provider{}, cryptoProvider)
+			manager.Initialize(consenters)
+		}, "Should panic when file repo dir does not exist")
+	})
+
+	t.Run("File repo dir not readable", func(t *testing.T) {
+		tmpdir, err := ioutil.TempDir("", "registrar_test-")
+		require.NoError(t, err)
+		defer os.RemoveAll(tmpdir)
+
+		lf, err := fileledger.New(tmpdir, &disabled.Provider{})
+		require.NoError(t, err)
+
+		fileRepoDir := filepath.Join(tmpdir, "filerepo")
+		err = os.MkdirAll(fileRepoDir, 0300)
+		require.NoError(t, err)
+
+		var manager *Registrar
+		assert.Panics(t, func() {
+			manager = NewRegistrar(localconfig.TopLevel{
+				ChannelParticipation: localconfig.ChannelParticipation{
+					Enabled:     true,
+					FileRepoDir: fileRepoDir,
+				},
+			}, lf, mockCrypto(), &disabled.Provider{}, cryptoProvider)
+			manager.Initialize(consenters)
+		}, "Should panic when file repo dir is not readable")
+	})
+
+	t.Run("File repo dir not writable", func(t *testing.T) {
+		tmpdir, err := ioutil.TempDir("", "registrar_test-")
+		require.NoError(t, err)
+		defer os.RemoveAll(tmpdir)
+
+		lf, err := fileledger.New(tmpdir, &disabled.Provider{})
+		require.NoError(t, err)
+
+		fileRepoDir := filepath.Join(tmpdir, "filerepo")
+		err = os.MkdirAll(fileRepoDir, 0500)
+		require.NoError(t, err)
+
+		var manager *Registrar
+		assert.Panics(t, func() {
+			manager = NewRegistrar(localconfig.TopLevel{
+				ChannelParticipation: localconfig.ChannelParticipation{
+					Enabled:     true,
+					FileRepoDir: fileRepoDir,
+				},
+			}, lf, mockCrypto(), &disabled.Provider{}, cryptoProvider)
+			manager.Initialize(consenters)
+		}, "Should panic when file repo dir is not writable")
 	})
 }
 

@@ -126,4 +126,5 @@ type OrdererStatsd struct {
 type ChannelParticipation struct {
 	Enabled            bool   `yaml:"Enabled"`
 	MaxRequestBodySize string `yaml:"MaxRequestBodySize,omitempty"`
+	FileRepoDir        string `yaml:"FileRepoDir"`
 }

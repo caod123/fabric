@@ -36,6 +36,10 @@ type Repo struct {
 // New initializes a new file repo at repoParentDir/fileSuffix.
 // All file system operations on the returned file repo are thread safe.
 func New(repoParentDir, fileSuffix string) (*Repo, error) {
+	if err := validateFileRepoDir(repoParentDir); err != nil {
+		return nil, err
+	}
+
 	if err := validateFileSuffix(fileSuffix); err != nil {
 		return nil, err
 	}
@@ -175,4 +179,29 @@ func validateFileSuffix(fileSuffix string) error {
 	}
 
 	return nil
+}
+
+// validateFileRepoDir checks if the directory exists and is readable/writable
+func validateFileRepoDir(dir string) error {
+	// Check dir exists
+	if exists, err := fileutil.DirExists(dir); !exists {
+		if err != nil {
+			return err
+		}
+
+		return fmt.Errorf("directory %s does not exist", dir)
+	}
+
+	// Check dir is readable
+	if _, err := ioutil.ReadDir(dir); err != nil {
+		return errors.Wrapf(err, "could not read directory %s", dir)
+	}
+
+	// Check dir is writable
+	tmpFile := filepath.Join(dir, ".tmpfile")
+	if err := ioutil.WriteFile(tmpFile, []byte(""), 0600); err != nil {
+		return errors.Errorf("could not write to directory %s", dir)
+	}
+
+	return os.Remove(tmpFile)
 }

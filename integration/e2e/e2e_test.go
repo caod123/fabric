@@ -93,7 +93,13 @@ var _ = Describe("EndToEnd", func() {
 			network = nwo.New(nwo.BasicSolo(), testDir, nil, StartPort(), components)
 			network.MetricsProvider = "statsd"
 			network.StatsdEndpoint = metricsReader.Address()
+
 			network.ChannelParticipationEnabled = true
+			fileRepoDir := filepath.Join(testDir, "filerepo")
+			network.ChannelParticipationFileRepoDir = fileRepoDir
+			err := os.MkdirAll(fileRepoDir, 0755)
+			Expect(err).NotTo(HaveOccurred())
+
 			network.Profiles = append(network.Profiles, &nwo.Profile{
 				Name:          "TwoOrgsBaseProfileChannel",
 				Consortium:    "SampleConsortium",
@@ -119,6 +125,7 @@ var _ = Describe("EndToEnd", func() {
 				core.VM = nil
 				network.WritePeerConfig(peer, core)
 			}
+
 			network.Bootstrap()
 
 			networkRunner := network.NetworkGroupRunner()
@@ -213,7 +220,13 @@ var _ = Describe("EndToEnd", func() {
 		BeforeEach(func() {
 			network = nwo.New(nwo.BasicKafka(), testDir, client, StartPort(), components)
 			network.MetricsProvider = "prometheus"
+
 			network.ChannelParticipationEnabled = true
+			fileRepoDir := filepath.Join(testDir, "filerepo")
+			network.ChannelParticipationFileRepoDir = fileRepoDir
+			err := os.MkdirAll(fileRepoDir, 0755)
+			Expect(err).NotTo(HaveOccurred())
+
 			network.GenerateConfigTree()
 			network.Bootstrap()
 
@@ -344,7 +357,13 @@ var _ = Describe("EndToEnd", func() {
 
 		BeforeEach(func() {
 			network = nwo.New(nwo.MultiChannelEtcdRaft(), testDir, client, StartPort(), components)
+
 			network.ChannelParticipationEnabled = true
+			fileRepoDir := filepath.Join(testDir, "filerepo")
+			network.ChannelParticipationFileRepoDir = fileRepoDir
+			err := os.MkdirAll(fileRepoDir, 0755)
+			Expect(err).NotTo(HaveOccurred())
+
 			network.GenerateConfigTree()
 			for _, peer := range network.Peers {
 				core := network.ReadPeerConfig(peer)
@@ -353,6 +372,7 @@ var _ = Describe("EndToEnd", func() {
 				core.Peer.Deliveryclient.ReconnectTotalTimeThreshold = time.Duration(time.Second)
 				network.WritePeerConfig(peer, core)
 			}
+
 			network.Bootstrap()
 
 			ordererRunner := network.OrdererGroupRunner()

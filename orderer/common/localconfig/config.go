@@ -207,6 +207,7 @@ type ChannelParticipation struct {
 	Enabled            bool
 	RemoveStorage      bool // Whether to permanently remove storage on channel removal.
 	MaxRequestBodySize uint32
+	FileRepoDir        string
 }
 
 // Defaults carries the default orderer configuration values.
@@ -288,6 +289,7 @@ var Defaults = TopLevel{
 		Enabled:            false,
 		RemoveStorage:      false,
 		MaxRequestBodySize: 1024 * 1024,
+		FileRepoDir:        "/var/hyperledger/production/orderer/filerepo",
 	},
 }
 
@@ -485,6 +487,10 @@ func (c *TopLevel) completeInitialization(configDir string) {
 		case c.Kafka.Version == sarama.KafkaVersion{}:
 			logger.Infof("Kafka.Version unset, setting to %v", Defaults.Kafka.Version)
 			c.Kafka.Version = Defaults.Kafka.Version
+
+		case c.ChannelParticipation.FileRepoDir == "":
+			logger.Infof("ChannelParticipation.FileRepoDir unset, setting to %s", Defaults.ChannelParticipation.FileRepoDir)
+			c.ChannelParticipation.FileRepoDir = Defaults.ChannelParticipation.FileRepoDir
 
 		default:
 			return

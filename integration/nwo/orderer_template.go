@@ -120,4 +120,5 @@ Metrics:
 ChannelParticipation:
   Enabled: {{ .ChannelParticipationEnabled }}
   MaxRequestBodySize: 1 MB
+  FileRepoDir: {{ .ChannelParticipationFileRepoDir }}
 `
