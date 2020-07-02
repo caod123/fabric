@@ -635,14 +635,27 @@ func TestRegistrar_JoinChannel(t *testing.T) {
 		require.NoError(t, err)
 		defer os.RemoveAll(tmpdir)
 
+		fileRepoDir := filepath.Join(tmpdir, "filerepo")
+		err = os.MkdirAll(fileRepoDir, 0700)
+		require.NoError(t, err)
+
 		ledgerFactory, _ := newLedgerAndFactory(tmpdir, "sys-channel", genesisBlockSys)
 		mockConsenters := map[string]consensus.Consenter{confSys.Orderer.OrdererType: &mockConsenter{}}
-		registrar := NewRegistrar(localconfig.TopLevel{}, ledgerFactory, mockCrypto(), &disabled.Provider{}, cryptoProvider)
+		registrar := NewRegistrar(localconfig.TopLevel{
+			ChannelParticipation: localconfig.ChannelParticipation{
+				Enabled:     true,
+				FileRepoDir: fileRepoDir,
+			},
+		}, ledgerFactory, mockCrypto(), &disabled.Provider{}, cryptoProvider)
 		registrar.Initialize(mockConsenters)
 
 		info, err := registrar.JoinChannel("some-app-channel", &cb.Block{}, true)
 		assert.EqualError(t, err, "system channel exists")
 		assert.Equal(t, types.ChannelInfo{}, info)
+
+		joinBlockPath := filepath.Join(fileRepoDir, "joinblock", "some-app-channel.joinblock")
+		_, err = os.Stat(joinBlockPath)
+		require.True(t, os.IsNotExist(err))
 	})
 
 	t.Run("Reject join when channel exists", func(t *testing.T) {
@@ -650,12 +663,21 @@ func TestRegistrar_JoinChannel(t *testing.T) {
 		require.NoError(t, err)
 		defer os.RemoveAll(tmpdir)
 
+		fileRepoDir := filepath.Join(tmpdir, "filerepo")
+		err = os.MkdirAll(fileRepoDir, 0700)
+		require.NoError(t, err)
+
 		ledgerFactory, _ := newLedgerAndFactory(tmpdir, "", nil)
 		mockConsenters := map[string]consensus.Consenter{confSys.Orderer.OrdererType: &mockConsenter{}, "etcdraft": &mockConsenter{}}
 		config := localconfig.TopLevel{}
 		config.General.BootstrapMethod = "none"
 		config.General.GenesisFile = ""
-		registrar := NewRegistrar(config, ledgerFactory, mockCrypto(), &disabled.Provider{}, cryptoProvider)
+		registrar := NewRegistrar(localconfig.TopLevel{
+			ChannelParticipation: localconfig.ChannelParticipation{
+				Enabled:     true,
+				FileRepoDir: fileRepoDir,
+			},
+		}, ledgerFactory, mockCrypto(), &disabled.Provider{}, cryptoProvider)
 		registrar.Initialize(mockConsenters)
 
 		ledger, err := ledgerFactory.GetOrCreate("my-channel")
@@ -671,6 +693,10 @@ func TestRegistrar_JoinChannel(t *testing.T) {
 		info, err := registrar.JoinChannel("my-channel", &cb.Block{}, true)
 		assert.EqualError(t, err, "channel already exists")
 		assert.Equal(t, types.ChannelInfo{}, info)
+
+		joinBlockPath := filepath.Join(fileRepoDir, "joinblock", "my-channel.joinblock")
+		_, err = os.Stat(joinBlockPath)
+		require.True(t, os.IsNotExist(err))
 	})
 
 	t.Run("Reject system channel join when app channels exist", func(t *testing.T) {
@@ -678,12 +704,21 @@ func TestRegistrar_JoinChannel(t *testing.T) {
 		require.NoError(t, err)
 		defer os.RemoveAll(tmpdir)
 
+		fileRepoDir := filepath.Join(tmpdir, "filerepo")
+		err = os.MkdirAll(fileRepoDir, 0700)
+		require.NoError(t, err)
+
 		ledgerFactory, _ := newLedgerAndFactory(tmpdir, "", nil)
 		mockConsenters := map[string]consensus.Consenter{confSys.Orderer.OrdererType: &mockConsenter{}, "etcdraft": &mockConsenter{}}
 		config := localconfig.TopLevel{}
 		config.General.BootstrapMethod = "none"
 		config.General.GenesisFile = ""
-		registrar := NewRegistrar(config, ledgerFactory, mockCrypto(), &disabled.Provider{}, cryptoProvider)
+		registrar := NewRegistrar(localconfig.TopLevel{
+			ChannelParticipation: localconfig.ChannelParticipation{
+				Enabled:     true,
+				FileRepoDir: fileRepoDir,
+			},
+		}, ledgerFactory, mockCrypto(), &disabled.Provider{}, cryptoProvider)
 		registrar.Initialize(mockConsenters)
 
 		ledger, err := ledgerFactory.GetOrCreate("my-channel")
@@ -699,12 +734,20 @@ func TestRegistrar_JoinChannel(t *testing.T) {
 		info, err := registrar.JoinChannel("sys-channel", &cb.Block{}, false)
 		assert.EqualError(t, err, "application channels already exist")
 		assert.Equal(t, types.ChannelInfo{}, info)
+
+		joinBlockPath := filepath.Join(fileRepoDir, "joinblock", "sys-channel.joinblock")
+		_, err = os.Stat(joinBlockPath)
+		require.True(t, os.IsNotExist(err))
 	})
 
-	t.Run("no etcdraft consenter without system channel", func(t *testing.T) {
+	t.Run("No etcdraft consenter without system channel", func(t *testing.T) {
 		tmpdir, err := ioutil.TempDir("", "registrar_test-")
 		require.NoError(t, err)
 		defer os.RemoveAll(tmpdir)
+
+		fileRepoDir := filepath.Join(tmpdir, "filerepo")
+		err = os.MkdirAll(fileRepoDir, 0700)
+		require.NoError(t, err)
 
 		ledgerFactory, _ := newLedgerAndFactory(tmpdir, "", nil)
 		mockConsenters := map[string]consensus.Consenter{"not-raft": &mockConsenter{}}
@@ -712,7 +755,12 @@ func TestRegistrar_JoinChannel(t *testing.T) {
 		config := localconfig.TopLevel{}
 		config.General.BootstrapMethod = "none"
 		config.General.GenesisFile = ""
-		registrar := NewRegistrar(config, ledgerFactory, mockCrypto(), &disabled.Provider{}, cryptoProvider)
+		registrar := NewRegistrar(localconfig.TopLevel{
+			ChannelParticipation: localconfig.ChannelParticipation{
+				Enabled:     true,
+				FileRepoDir: fileRepoDir,
+			},
+		}, ledgerFactory, mockCrypto(), &disabled.Provider{}, cryptoProvider)
 
 		assert.Panics(t, func() { registrar.Initialize(mockConsenters) })
 	})
@@ -721,6 +769,10 @@ func TestRegistrar_JoinChannel(t *testing.T) {
 		tmpdir, err := ioutil.TempDir("", "registrar_test-")
 		require.NoError(t, err)
 		defer os.RemoveAll(tmpdir)
+
+		fileRepoDir := filepath.Join(tmpdir, "filerepo")
+		err = os.MkdirAll(fileRepoDir, 0700)
+		require.NoError(t, err)
 
 		tlsCA, _ := tlsgen.NewCA()
 
@@ -738,7 +790,12 @@ func TestRegistrar_JoinChannel(t *testing.T) {
 		config := localconfig.TopLevel{}
 		config.General.BootstrapMethod = "none"
 		config.General.GenesisFile = ""
-		registrar := NewRegistrar(config, ledgerFactory, mockCrypto(), &disabled.Provider{}, cryptoProvider)
+		registrar := NewRegistrar(localconfig.TopLevel{
+			ChannelParticipation: localconfig.ChannelParticipation{
+				Enabled:     true,
+				FileRepoDir: fileRepoDir,
+			},
+		}, ledgerFactory, mockCrypto(), &disabled.Provider{}, cryptoProvider)
 		registrar.Initialize(mockConsenters)
 
 		// Before join the chain, it doesn't exist
@@ -749,6 +806,10 @@ func TestRegistrar_JoinChannel(t *testing.T) {
 		assert.Equal(t, types.ChannelInfo{Name: "my-raft-channel", URL: "", ClusterRelation: "member", Status: "active", Height: 0x1}, info)
 		// After creating the chain, it exists
 		assert.NotNil(t, registrar.GetChain("my-raft-channel"))
+
+		joinBlockPath := filepath.Join(fileRepoDir, "joinblock", "my-raft-channel.joinblock")
+		_, err = os.Stat(joinBlockPath)
+		require.NoError(t, err)
 	})
 }
 

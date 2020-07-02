@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/golang/protobuf/proto"
 	cb "github.com/hyperledger/fabric-protos-go/common"
 	ab "github.com/hyperledger/fabric-protos-go/orderer"
 	"github.com/hyperledger/fabric/bccsp"
@@ -479,18 +480,37 @@ func (r *Registrar) JoinChannel(channelID string, configBlock *cb.Block, isAppCh
 		return types.ChannelInfo{}, errors.Wrap(err, "failed extracting config envelope from block")
 	}
 
-	//TODO save the join-block in the file repo to make this action crash tolerant.
+	blockBytes, err := proto.Marshal(configBlock)
+	if err != nil {
+		return types.ChannelInfo{}, errors.Wrap(err, "failed marshaling joinblock")
+	}
+
+	if err := r.joinBlockFileRepo.Save(channelID, blockBytes); err != nil {
+		return types.ChannelInfo{}, errors.Wrapf(err, "failed saving joinblock to file repo for channel %s", channelID)
+	}
 
 	ledgerResources, err := r.newLedgerResources(configEnv)
 	if err != nil {
-		//TODO remove join block
-		return types.ChannelInfo{}, errors.Wrap(err, "failed creating ledger resources")
+		err = errors.Wrap(err, "failed creating ledger resources")
+
+		if err2 := r.removeJoinBlock(channelID); err2 != nil {
+			// Stack file repo error on top of ledger resource creation error
+			err = errors.WithStack(err2)
+		}
+
+		return types.ChannelInfo{}, err
 	}
 
 	joinSupport, err := newChainSupportForJoin(configBlock, r, ledgerResources, r.consenters, r.signer, r.blockcutterMetrics, r.bccsp)
 	if err != nil {
-		//TODO remove join block, clean ledger resources
-		return types.ChannelInfo{}, errors.Wrap(err, "failed creating chain support for join")
+		err = errors.Wrap(err, "failed creating chain support for join")
+
+		if err2 := r.removeJoinBlock(channelID); err2 != nil {
+			// Stack file repo error on top of chain support creation error
+			err = errors.WithStack(err2)
+		}
+
+		return types.ChannelInfo{}, err
 	}
 
 	info := types.ChannelInfo{
@@ -513,4 +533,12 @@ func (r *Registrar) JoinChannel(channelID string, configBlock *cb.Block, isAppCh
 func (r *Registrar) RemoveChannel(channelID string, removeStorage bool) error {
 	//TODO
 	return errors.New("Not implemented yet")
+}
+
+func (r *Registrar) removeJoinBlock(channelID string) error {
+	if err := r.joinBlockFileRepo.Remove(channelID); err != nil {
+		return errors.Wrapf(err, "failed removing joinblock for channel %s", channelID)
+	}
+
+	return nil
 }
