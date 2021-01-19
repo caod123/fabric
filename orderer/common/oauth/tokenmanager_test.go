@@ -1,4 +1,4 @@
-package jwt
+package oauth
 
 import (
 	"crypto/ecdsa"
@@ -6,16 +6,18 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"fmt"
 	"math/big"
 	"net"
 	"testing"
 	"time"
 
+	"github.com/hyperledger/fabric/core/chaincode/lifecycle/mock"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/square/go-jose.v2/jwt"
 )
 
-func TestCreateJWT(t *testing.T) {
+func TestCreateAssertion(t *testing.T) {
 	ca := newCACert()
 	caPrivKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
@@ -41,10 +43,10 @@ func TestCreateJWT(t *testing.T) {
 	signer, err := NewSigner(certs, certPrivKey)
 	require.NoError(t, err)
 
-	token, err := CreateToken(signer, clientID, clientID, aud, iat, exp)
+	assertion, err := CreateAssertion(signer, clientID, clientID, aud, iat, exp)
 	require.NoError(t, err)
 
-	parsedToken, err := jwt.ParseSigned(token)
+	parsedToken, err := jwt.ParseSigned(assertion)
 	require.NoError(t, err)
 
 	cl := jwt.Claims{}
@@ -57,7 +59,7 @@ func TestCreateJWT(t *testing.T) {
 	require.Equal(t, jwt.NewNumericDate(exp), cl.Expiry)
 }
 
-func TestValidateToken(t *testing.T) {
+func TestTokenManager_ValidateAssertion(t *testing.T) {
 	ca := newCACert()
 	caPrivKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
@@ -83,14 +85,33 @@ func TestValidateToken(t *testing.T) {
 	signer, err := NewSigner(certs, certPrivKey)
 	require.NoError(t, err)
 
-	token, err := CreateToken(signer, clientID, clientID, aud, iat, exp)
+	assertion, err := CreateAssertion(signer, clientID, clientID, aud, iat, exp)
 	require.NoError(t, err)
 
-	err = ValidateToken(token, &certPrivKey.PublicKey, clientID, aud)
+	// Create a new token manager with an expiry of 1s
+	tm := NewTokenManager(1)
+
+	fakeMSP := &mock.MSP{}
+	fakeMSP.GetIdentifierReturns(clientID, nil)
+	fakeMSP.DeserializeIdentityReturns(nil, nil)
+	fakeMSP.ValidateReturns(nil)
+
+	roots := x509.NewCertPool()
+	roots.AddCert(caCert)
+	opts := x509.VerifyOptions{Roots: roots}
+	token, err := tm.ValidateAssertion(assertion, &certPrivKey.PublicKey, fakeMSP, aud, opts)
 	require.NoError(t, err)
+
+	require.Contains(t, tm.observedJTIs, token.Claims.ID)
+	require.Equal(t, token, tm.tokenStore[token.Info.AccessToken])
+
+	time.Sleep(time.Second)
+
+	require.Empty(t, tm.observedJTIs)
+	require.Empty(t, tm.tokenStore)
 }
 
-func TestValidateToken_Failures(t *testing.T) {
+func TestTokenManager_ValidateAssertion_Failures(t *testing.T) {
 	privKey1, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 	privKey2, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -119,7 +140,7 @@ func TestValidateToken_Failures(t *testing.T) {
 			expectedErr:  "square/go-jose: error in cryptographic primitive",
 		},
 		{
-			name:         "wrong iss",
+			name:         "iss and sub do not match",
 			signingKey:   privKey1,
 			verifyingKey: &privKey1.PublicKey,
 			iss:          "bad",
@@ -127,18 +148,18 @@ func TestValidateToken_Failures(t *testing.T) {
 			aud:          []string{"audurl"},
 			iat:          time.Now(),
 			exp:          time.Now().Add(time.Minute),
-			expectedErr:  "square/go-jose/jwt: validation failed, invalid issuer claim (iss)",
+			expectedErr:  "iss `bad` and sub `clientid` do not match",
 		},
 		{
-			name:         "wrong sub",
+			name:         "wrong iss",
 			signingKey:   privKey1,
 			verifyingKey: &privKey1.PublicKey,
-			iss:          "clientid",
+			iss:          "bad",
 			sub:          "bad",
 			aud:          []string{"audurl"},
 			iat:          time.Now(),
 			exp:          time.Now().Add(time.Minute),
-			expectedErr:  "square/go-jose/jwt: validation failed, invalid subject claim (sub)",
+			expectedErr:  "client_id `bad` does not match local mspID `clientid`",
 		},
 		{
 			name:         "wrong aud",
@@ -166,20 +187,89 @@ func TestValidateToken_Failures(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			certs := []*x509.Certificate{}
+			ca := newCACert()
+			caPrivKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+			require.NoError(t, err)
+			caBytes, err := x509.CreateCertificate(rand.Reader, ca, ca, &caPrivKey.PublicKey, caPrivKey)
+			require.NoError(t, err)
+			caCert, err := x509.ParseCertificate(caBytes)
+			require.NoError(t, err)
+			cert := newCert()
+			certPrivKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+			require.NoError(t, err)
+			certBytes, err := x509.CreateCertificate(rand.Reader, cert, ca, &certPrivKey.PublicKey, caPrivKey)
+			require.NoError(t, err)
+			cert1, err := x509.ParseCertificate(certBytes)
+			require.NoError(t, err)
+
+			certs := []*x509.Certificate{cert1, caCert}
 
 			clientID := "clientid"
 			aud := []string{"audurl"}
 
 			signer, err := NewSigner(certs, tt.signingKey)
-			token, err := CreateToken(signer, tt.iss, tt.sub, tt.aud, tt.iat, tt.exp)
+			assertion, err := CreateAssertion(signer, tt.iss, tt.sub, tt.aud, tt.iat, tt.exp)
 			require.NoError(t, err)
 
-			err = ValidateToken(token, tt.verifyingKey, clientID, aud)
-			require.EqualError(t, err, tt.expectedErr)
+			tm := NewTokenManager(1)
 
+			fakeMSP := &mock.MSP{}
+			fakeMSP.GetIdentifierReturns(clientID, nil)
+			fakeMSP.DeserializeIdentityReturns(nil, nil)
+			fakeMSP.ValidateReturns(nil)
+
+			roots := x509.NewCertPool()
+			roots.AddCert(caCert)
+			opts := x509.VerifyOptions{Roots: roots}
+			token, err := tm.ValidateAssertion(assertion, tt.verifyingKey, fakeMSP, aud, opts)
+			require.EqualError(t, err, tt.expectedErr)
+			require.Nil(t, token)
 		})
 	}
+
+	t.Run("jti already observed", func(t *testing.T) {
+		ca := newCACert()
+		caPrivKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		require.NoError(t, err)
+		caBytes, err := x509.CreateCertificate(rand.Reader, ca, ca, &caPrivKey.PublicKey, caPrivKey)
+		require.NoError(t, err)
+		caCert, err := x509.ParseCertificate(caBytes)
+		require.NoError(t, err)
+		cert := newCert()
+		certPrivKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		require.NoError(t, err)
+		certBytes, err := x509.CreateCertificate(rand.Reader, cert, ca, &certPrivKey.PublicKey, caPrivKey)
+		require.NoError(t, err)
+		cert1, err := x509.ParseCertificate(certBytes)
+		require.NoError(t, err)
+
+		certs := []*x509.Certificate{cert1, caCert}
+
+		clientID := "clientid"
+		aud := []string{"audurl"}
+
+		signer, err := NewSigner(certs, privKey1)
+		assertion, err := CreateAssertion(signer, clientID, clientID, aud, time.Now(), time.Now().Add(5*time.Second))
+		require.NoError(t, err)
+
+		tm := NewTokenManager(1)
+
+		fakeMSP := &mock.MSP{}
+		fakeMSP.GetIdentifierReturns(clientID, nil)
+		fakeMSP.DeserializeIdentityReturns(nil, nil)
+		fakeMSP.ValidateReturns(nil)
+
+		roots := x509.NewCertPool()
+		roots.AddCert(caCert)
+		opts := x509.VerifyOptions{Roots: roots}
+		token, err := tm.ValidateAssertion(assertion, &privKey1.PublicKey, fakeMSP, aud, opts)
+		require.NoError(t, err)
+		jti := token.Claims.ID
+		require.NotNil(t, token)
+		token, err = tm.ValidateAssertion(assertion, &privKey1.PublicKey, fakeMSP, aud, opts)
+		require.EqualError(t, err, fmt.Sprintf("jti `%s` already observed, preventing replay", jti))
+		require.Nil(t, token)
+	})
 }
 
 func newCACert() *x509.Certificate {

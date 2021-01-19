@@ -20,7 +20,9 @@ import (
 	cb "github.com/hyperledger/fabric-protos-go/common"
 	"github.com/hyperledger/fabric/common/configtx"
 	"github.com/hyperledger/fabric/common/flogging"
+	"github.com/hyperledger/fabric/msp"
 	"github.com/hyperledger/fabric/orderer/common/localconfig"
+	"github.com/hyperledger/fabric/orderer/common/oauth"
 	"github.com/hyperledger/fabric/orderer/common/types"
 	"github.com/pkg/errors"
 )
@@ -28,6 +30,7 @@ import (
 const (
 	URLBaseV1              = "/participation/v1/"
 	URLBaseV1Channels      = URLBaseV1 + "channels"
+	URLBaseV1Token         = URLBaseV1 + "token"
 	FormDataConfigBlockKey = "config-block"
 
 	channelIDKey        = "channelID"
@@ -56,19 +59,27 @@ type ChannelManagement interface {
 
 // HTTPHandler handles all the HTTP requests to the channel participation API.
 type HTTPHandler struct {
-	logger    *flogging.FabricLogger
-	config    localconfig.ChannelParticipation
-	registrar ChannelManagement
-	router    *mux.Router
+	logger        *flogging.FabricLogger
+	config        localconfig.ChannelParticipation
+	registrar     ChannelManagement
+	router        *mux.Router
+	listenAddress string
+	localMSP      msp.MSP
+	tokenManager  *oauth.TokenManager
 }
 
-func NewHTTPHandler(config localconfig.ChannelParticipation, registrar ChannelManagement) *HTTPHandler {
+func NewHTTPHandler(config localconfig.ChannelParticipation, registrar ChannelManagement, listenAddress string, localMSP msp.MSP) *HTTPHandler {
 	handler := &HTTPHandler{
-		logger:    flogging.MustGetLogger("orderer.commmon.channelparticipation"),
-		config:    config,
-		registrar: registrar,
-		router:    mux.NewRouter(),
+		logger:        flogging.MustGetLogger("orderer.commmon.channelparticipation"),
+		config:        config,
+		registrar:     registrar,
+		router:        mux.NewRouter(),
+		listenAddress: listenAddress,
+		localMSP:      localMSP,
+		tokenManager:  oauth.NewTokenManager(0),
 	}
+
+	handler.router.HandleFunc(URLBaseV1Token, handler.serveTokenRequest).Methods(http.MethodPost)
 
 	// swagger:operation GET /v1/participation/channels/{channelID} channels listChannel
 	// ---

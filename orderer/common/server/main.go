@@ -90,7 +90,8 @@ func Main() {
 
 	cryptoProvider := factory.GetDefault()
 
-	signer, signErr := loadLocalMSP(conf).GetDefaultSigningIdentity()
+	localMSP := loadLocalMSP(conf)
+	signer, signErr := localMSP.GetDefaultSigningIdentity()
 	if signErr != nil {
 		logger.Panicf("Failed to get local MSP identity: %s", signErr)
 	}
@@ -257,10 +258,11 @@ func Main() {
 		tlsCallback,
 	)
 
+	manager.MSPManager()
 	adminServer := newAdminServer(conf.Admin)
 	adminServer.RegisterHandler(
 		channelparticipation.URLBaseV1,
-		channelparticipation.NewHTTPHandler(conf.ChannelParticipation, manager),
+		channelparticipation.NewHTTPHandler(conf.ChannelParticipation, manager, conf.Admin.ListenAddress, localMSP),
 		conf.Admin.TLS.Enabled,
 	)
 	if err = adminServer.Start(); err != nil {
